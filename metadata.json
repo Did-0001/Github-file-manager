@@ -1,0 +1,6 @@
+{
+  "name": "GitHub File Manager",
+  "description": "Two-way GitHub file manager and transfer client supporting real repository browsing, exact destination uploads, SAF folder/file transfers, wipe-before-upload, and persistent transfer queue.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
