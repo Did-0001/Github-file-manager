@@ -66,13 +66,20 @@ data class DiffItem(
     val reason: String? = null
 )
 
+enum class WipeMode {
+    NONE,
+    DESTINATION,
+    FULL_BRANCH
+}
+
 data class DiffReport(
     val added: Int,
     val modified: Int,
     val deleted: Int,
     val unchanged: Int,
     val excluded: Int,
-    val items: List<DiffItem>
+    val items: List<DiffItem>,
+    val reviewedHeadSha: String? = null
 )
 
 data class FileScanItem(

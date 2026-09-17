@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 class ApiClient(private val secureStorage: SecureStorage) {
 
     val moshi: Moshi = Moshi.Builder()
+        .add(com.example.data.remote.dto.CreateTreeEntryDto::class.java, com.example.data.remote.dto.CreateTreeEntryJsonAdapter())
         .add(KotlinJsonAdapterFactory())
         .build()
 

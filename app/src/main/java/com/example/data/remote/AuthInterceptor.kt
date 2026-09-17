@@ -8,7 +8,8 @@ class AuthInterceptor(private val secureStorage: SecureStorage) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         val builder = original.newBuilder()
-            .header("Accept", "application/vnd.github.v3+json")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
 
         val token = secureStorage.getToken()
         if (!token.isNullOrBlank() && original.header("Authorization") == null) {

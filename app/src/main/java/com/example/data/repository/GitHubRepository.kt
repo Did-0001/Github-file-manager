@@ -30,9 +30,9 @@ class GitHubRepository(private val apiClient: ApiClient) {
         }
     }
 
-    suspend fun getUserRepos(): Result<List<GitHubRepoDto>> {
+    suspend fun getUserRepos(page: Int = 1): Result<List<GitHubRepoDto>> {
         return try {
-            val response = apiClient.gitHubApi.listUserRepos()
+            val response = apiClient.gitHubApi.listUserRepos(page = page, perPage = 100)
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
@@ -41,6 +41,23 @@ class GitHubRepository(private val apiClient: ApiClient) {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    suspend fun getAllUserRepos(): Result<List<GitHubRepoDto>> {
+        val allRepos = mutableListOf<GitHubRepoDto>()
+        var page = 1
+        while (true) {
+            val pageRes = getUserRepos(page)
+            if (pageRes.isFailure) {
+                if (allRepos.isNotEmpty()) return Result.success(allRepos)
+                return pageRes
+            }
+            val list = pageRes.getOrThrow()
+            allRepos.addAll(list)
+            if (list.size < 100) break
+            page++
+        }
+        return Result.success(allRepos.distinctBy { it.id })
     }
 
     suspend fun createRepo(name: String, description: String?, isPrivate: Boolean): Result<GitHubRepoDto> {
@@ -57,9 +74,9 @@ class GitHubRepository(private val apiClient: ApiClient) {
         }
     }
 
-    suspend fun getBranches(owner: String, repo: String): Result<List<GitHubBranchDto>> {
+    suspend fun getBranches(owner: String, repo: String, page: Int = 1): Result<List<GitHubBranchDto>> {
         return try {
-            val response = apiClient.gitHubApi.listBranches(owner, repo)
+            val response = apiClient.gitHubApi.listBranches(owner, repo, perPage = 100)
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
@@ -68,6 +85,23 @@ class GitHubRepository(private val apiClient: ApiClient) {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    suspend fun getAllBranches(owner: String, repo: String): Result<List<GitHubBranchDto>> {
+        val allBranches = mutableListOf<GitHubBranchDto>()
+        var page = 1
+        while (true) {
+            val pageRes = getBranches(owner, repo, page)
+            if (pageRes.isFailure) {
+                if (allBranches.isNotEmpty()) return Result.success(allBranches)
+                return pageRes
+            }
+            val list = pageRes.getOrThrow()
+            allBranches.addAll(list)
+            if (list.size < 100) break
+            page++
+        }
+        return Result.success(allBranches.distinctBy { it.name })
     }
 
     suspend fun getDirectoryContents(
@@ -253,6 +287,46 @@ class GitHubRepository(private val apiClient: ApiClient) {
             } else {
                 Result.failure(Exception(parseError(response)))
             }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getFullTree(owner: String, repo: String, rootTreeSha: String): Result<List<GitTreeItemDto>> {
+        return try {
+            val rootRes = getTree(owner, repo, rootTreeSha, recursive = true)
+            if (rootRes.isFailure) return Result.failure(rootRes.exceptionOrNull()!!)
+            val rootTree = rootRes.getOrThrow()
+            if (!rootTree.truncated) {
+                return Result.success(rootTree.tree)
+            }
+
+            // Truncated tree recovery: traverse subtrees explicitly
+            val allItems = mutableListOf<GitTreeItemDto>()
+            allItems.addAll(rootTree.tree)
+
+            val pendingSubtrees = ArrayDeque<Pair<String, String>>()
+            for (item in rootTree.tree) {
+                if (item.type == "tree") {
+                    pendingSubtrees.add(Pair(item.path, item.sha))
+                }
+            }
+
+            while (pendingSubtrees.isNotEmpty()) {
+                val (prefix, sha) = pendingSubtrees.removeFirst()
+                val subRes = getTree(owner, repo, sha, recursive = false)
+                if (subRes.isSuccess) {
+                    for (subItem in subRes.getOrThrow().tree) {
+                        val subPath = "$prefix/${subItem.path}"
+                        val prefixedItem = subItem.copy(path = subPath)
+                        allItems.add(prefixedItem)
+                        if (subItem.type == "tree") {
+                            pendingSubtrees.add(Pair(subPath, subItem.sha))
+                        }
+                    }
+                }
+            }
+            Result.success(allItems.distinctBy { it.path })
         } catch (e: Exception) {
             Result.failure(e)
         }

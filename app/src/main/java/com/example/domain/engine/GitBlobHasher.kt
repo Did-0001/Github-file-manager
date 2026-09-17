@@ -3,6 +3,7 @@ package com.example.domain.engine
 import android.content.Context
 import android.net.Uri
 import java.io.IOException
+import java.io.InputStream
 import java.security.MessageDigest
 
 object GitBlobHasher {
@@ -12,16 +13,20 @@ object GitBlobHasher {
      * Git calculates blob identity as: SHA-1("blob <size>\u0000" + [file content bytes]).
      */
     fun calculateSha(context: Context, uri: Uri, size: Long): String {
+        val stream = context.contentResolver.openInputStream(uri)
+            ?: throw IOException("Cannot open stream for $uri")
+        return stream.use { calculateSha(it, size) }
+    }
+
+    fun calculateSha(stream: InputStream, size: Long): String {
         val md = MessageDigest.getInstance("SHA-1")
         val header = "blob $size\u0000".toByteArray(Charsets.US_ASCII)
         md.update(header)
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            val buffer = ByteArray(16384)
-            var read: Int
-            while (stream.read(buffer).also { read = it } != -1) {
-                md.update(buffer, 0, read)
-            }
-        } ?: throw IOException("Cannot open stream for $uri")
+        val buffer = ByteArray(16384)
+        var read: Int
+        while (stream.read(buffer).also { read = it } != -1) {
+            md.update(buffer, 0, read)
+        }
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 

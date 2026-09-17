@@ -5,15 +5,11 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- Exclude Keystore-encrypted preferences from cloud backup -->
+        <exclude domain="sharedpref" path="github_file_manager_secure_prefs.xml"/>
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Exclude Keystore-encrypted preferences from direct device-to-device transfers -->
+        <exclude domain="sharedpref" path="github_file_manager_secure_prefs.xml"/>
     </device-transfer>
-    -->
 </data-extraction-rules>

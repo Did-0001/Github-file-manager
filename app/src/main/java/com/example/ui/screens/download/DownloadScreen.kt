@@ -49,10 +49,17 @@ fun DownloadScreen(
     var preserveStructure by remember { mutableStateOf(true) }
     var selectedPolicy by remember { mutableStateOf(OverwritePolicy.OVERWRITE) }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     val destPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
             destinationTreeUri = it
             destinationDisplayName = it.lastPathSegment?.substringAfterLast(':') ?: "Selected Folder"
         }
@@ -296,12 +303,18 @@ fun DownloadScreen(
                                 onClick = { selectedPolicy = OverwritePolicy.OVERWRITE }
                             )
                             Text("Overwrite", fontSize = 12.sp)
-                            Spacer(modifier = Modifier.width(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             RadioButton(
                                 selected = selectedPolicy == OverwritePolicy.SKIP,
                                 onClick = { selectedPolicy = OverwritePolicy.SKIP }
                             )
                             Text("Skip existing", fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            RadioButton(
+                                selected = selectedPolicy == OverwritePolicy.KEEP_BOTH,
+                                onClick = { selectedPolicy = OverwritePolicy.KEEP_BOTH }
+                            )
+                            Text("Keep both", fontSize = 12.sp)
                         }
                     }
 

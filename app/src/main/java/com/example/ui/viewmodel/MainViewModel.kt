@@ -167,7 +167,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadUserRepos() {
         viewModelScope.launch {
             _isLoadingRepos.value = true
-            val res = gitHubRepository.getUserRepos()
+            val res = gitHubRepository.getAllUserRepos()
             if (res.isSuccess) {
                 _userRepos.value = res.getOrThrow()
                 // If no repo selected, select first
@@ -195,7 +195,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun fetchBranches(owner: String, repo: String): List<GitHubBranchDto> {
-        val res = gitHubRepository.getBranches(owner, repo)
+        val res = gitHubRepository.getAllBranches(owner, repo)
         return res.getOrElse { emptyList() }
     }
 
@@ -423,6 +423,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             files = files,
             commitMessage = commitMessage,
             isWipe = isWipe,
+            reviewedHeadSha = _diffReport.value?.reviewedHeadSha,
             onCreated = onStarted
         )
     }

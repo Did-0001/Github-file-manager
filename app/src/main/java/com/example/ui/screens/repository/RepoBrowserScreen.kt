@@ -124,6 +124,25 @@ fun RepoBrowserScreen(
 
                                 if (selectedPaths.isNotEmpty()) {
                                     IconButton(
+                                        onClick = {
+                                            if (selectedPaths.size == 1) {
+                                                val single = filteredContents.find { it.path == selectedPaths.first() }
+                                                if (single != null) onDownloadFile(single)
+                                                else onDownloadCurrentFolder(currentPath)
+                                            } else {
+                                                onDownloadCurrentFolder(currentPath)
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("batch_download_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CloudDownload,
+                                            contentDescription = "Download Selected",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
+                                    IconButton(
                                         onClick = { showBatchDeleteDialog = true },
                                         modifier = Modifier.testTag("batch_delete_button")
                                     ) {
