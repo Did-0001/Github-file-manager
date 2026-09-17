@@ -272,6 +272,49 @@ class GitHubRepository(private val apiClient: ApiClient) {
         }
     }
 
+    suspend fun createBlobStream(owner: String, repo: String, requestBody: okhttp3.RequestBody): Result<String> {
+        return try {
+            val response = apiClient.gitHubApi.createBlobStream(owner, repo, requestBody)
+            if (response.isSuccessful && response.body() != null) {
+                Result.success(response.body()!!.sha)
+            } else {
+                Result.failure(Exception(parseError(response)))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteFilesBatch(
+        owner: String,
+        repo: String,
+        branch: String,
+        pathsToDelete: List<String>,
+        commitMessage: String
+    ): Result<String> {
+        return try {
+            val headSha = getBranchHeadSha(owner, repo, branch).getOrThrow()
+            val baseTreeSha = getCommitTreeSha(owner, repo, headSha).getOrThrow()
+
+            // In GitHub Git Data API, specifying sha = null deletes the entry from base_tree
+            val entries = pathsToDelete.map { path ->
+                CreateTreeEntryDto(
+                    path = path.trimStart('/'),
+                    mode = "100644",
+                    type = "blob",
+                    sha = null
+                )
+            }
+
+            val newTreeSha = createTree(owner, repo, baseTreeSha, entries).getOrThrow()
+            val newCommitSha = createCommit(owner, repo, commitMessage, newTreeSha, headSha).getOrThrow()
+            updateBranchRef(owner, repo, branch, newCommitSha).getOrThrow()
+            Result.success(newCommitSha)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun createTree(
         owner: String,
         repo: String,

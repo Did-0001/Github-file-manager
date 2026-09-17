@@ -307,6 +307,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateFile(file: GitHubContentDto, newContent: String, commitMsg: String, callback: (Boolean, String?) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            val base64 = android.util.Base64.encodeToString(newContent.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+            val res = gitHubRepository.createOrUpdateFile(
+                owner = repo.owner,
+                repo = repo.name,
+                path = file.path,
+                contentBase64 = base64,
+                commitMessage = commitMsg,
+                branch = repo.branch,
+                sha = file.sha
+            )
+            if (res.isSuccess) {
+                refreshContents()
+                callback(true, null)
+            } else {
+                callback(false, res.exceptionOrNull()?.message)
+            }
+        }
+    }
+
+    fun loadRawFileContent(file: GitHubContentDto, callback: (Result<String>) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            val url = file.downloadUrl ?: "https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${repo.branch}/${file.path}"
+            val res = gitHubRepository.downloadRaw(url)
+            if (res.isSuccess) {
+                try {
+                    val text = res.getOrThrow().string()
+                    callback(Result.success(text))
+                } catch (e: Exception) {
+                    callback(Result.failure(e))
+                }
+            } else {
+                callback(Result.failure(res.exceptionOrNull() ?: Exception("Failed to load file")))
+            }
+        }
+    }
+
     // UPLOAD & SCANNING METHODS
     fun scanFolder(uri: Uri) {
         viewModelScope.launch {
@@ -404,12 +444,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         transferEngine.pauseTransfer(transferId)
     }
 
+    fun resumeTransfer(transferId: String) {
+        transferEngine.resumeTransfer(transferId)
+    }
+
     fun cancelTransfer(transferId: String) {
         transferEngine.cancelTransfer(transferId)
     }
 
-    fun retryTransfer(transferId: String) {
-        // Can re-trigger
+    fun retryTransfer(transferId: String, failedOnly: Boolean = true) {
+        transferEngine.retryTransfer(transferId, failedOnly)
     }
 
     fun deleteTransfer(transferId: String) {
@@ -421,6 +465,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearAllTransfers() {
         viewModelScope.launch {
             transferRepository.clearAll()
+        }
+    }
+
+    fun clearCompletedTransfers() {
+        viewModelScope.launch {
+            transferRepository.clearCompleted()
+        }
+    }
+
+    fun getItemsForTransfer(transferId: String): Flow<List<com.example.data.local.entity.TransferItemEntity>> {
+        return transferRepository.getItemsForTransfer(transferId)
+    }
+
+    fun deleteFilesBatch(paths: List<String>, commitMessage: String, onResult: (Boolean, String?) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            val res = gitHubRepository.deleteFilesBatch(repo.owner, repo.name, repo.branch, paths, commitMessage)
+            if (res.isSuccess) {
+                refreshContents()
+                onResult(true, null)
+            } else {
+                onResult(false, res.exceptionOrNull()?.message)
+            }
         }
     }
 

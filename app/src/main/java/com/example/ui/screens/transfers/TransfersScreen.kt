@@ -2,6 +2,7 @@ package com.example.ui.screens.transfers
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,21 +24,27 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.TransferEntity
+import com.example.data.local.entity.TransferItemEntity
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.*
+import kotlinx.coroutines.flow.Flow
 import java.text.SimpleDateFormat
 import java.util.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransfersScreen(
     transfers: List<TransferEntity>,
     onPauseTransfer: (String) -> Unit,
+    onResumeTransfer: (String) -> Unit,
     onCancelTransfer: (String) -> Unit,
-    onRetryTransfer: (String) -> Unit,
+    onRetryTransfer: (String, Boolean) -> Unit,
     onDeleteTransfer: (String) -> Unit,
+    onClearCompleted: () -> Unit,
     onClearAll: () -> Unit,
     getSpeedForTransfer: (String) -> Long,
+    getItemsForTransfer: (String) -> Flow<List<TransferItemEntity>>,
     modifier: Modifier = Modifier
 ) {
     val activeTransfers = remember(transfers) {
@@ -52,6 +59,8 @@ fun TransfersScreen(
     }
 
     val clipboardManager = LocalClipboardManager.current
+    var inspectingTransferId by remember { mutableStateOf<String?>(null) }
+    var showRetryDialogTransferId by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -78,11 +87,21 @@ fun TransfersScreen(
                     }
 
                     if (transfers.isNotEmpty()) {
-                        IconButton(
-                            onClick = onClearAll,
-                            modifier = Modifier.testTag("clear_all_transfers_btn")
-                        ) {
-                            Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "Clear History")
+                        Row {
+                            if (pastTransfers.isNotEmpty()) {
+                                TextButton(
+                                    onClick = onClearCompleted,
+                                    modifier = Modifier.testTag("clear_completed_transfers_btn")
+                                ) {
+                                    Text("Clear Finished", fontSize = 11.sp)
+                                }
+                            }
+                            IconButton(
+                                onClick = onClearAll,
+                                modifier = Modifier.testTag("clear_all_transfers_btn")
+                            ) {
+                                Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "Clear All")
+                            }
                         }
                     }
                 }
@@ -129,7 +148,10 @@ fun TransfersScreen(
                             color = MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(1.dp, GhDarkAccentBlue.copy(alpha = 0.4f)),
-                            modifier = Modifier.fillMaxWidth().testTag("active_transfer_${transfer.id}")
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { inspectingTransferId = transfer.id }
+                                .testTag("active_transfer_${transfer.id}")
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
@@ -223,34 +245,46 @@ fun TransfersScreen(
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (transfer.status == "PAUSED") {
-                                        OutlinedButton(
-                                            onClick = { onRetryTransfer(transfer.id) },
-                                            modifier = Modifier.testTag("resume_transfer_btn")
-                                        ) {
-                                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Resume")
-                                        }
-                                    } else {
-                                        OutlinedButton(
-                                            onClick = { onPauseTransfer(transfer.id) },
-                                            modifier = Modifier.testTag("pause_transfer_btn")
-                                        ) {
-                                            Icon(imageVector = Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Pause")
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
                                     TextButton(
-                                        onClick = { onCancelTransfer(transfer.id) },
-                                        colors = ButtonDefaults.textButtonColors(contentColor = GhDarkAccentRed),
-                                        modifier = Modifier.testTag("cancel_transfer_btn")
+                                        onClick = { inspectingTransferId = transfer.id },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                                     ) {
-                                        Text("Cancel")
+                                        Icon(imageVector = Icons.Default.ListAlt, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("View Items", fontSize = 11.sp)
+                                    }
+
+                                    Row {
+                                        if (transfer.status == "PAUSED") {
+                                            OutlinedButton(
+                                                onClick = { onResumeTransfer(transfer.id) },
+                                                modifier = Modifier.testTag("resume_transfer_btn")
+                                            ) {
+                                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Resume")
+                                            }
+                                        } else {
+                                            OutlinedButton(
+                                                onClick = { onPauseTransfer(transfer.id) },
+                                                modifier = Modifier.testTag("pause_transfer_btn")
+                                            ) {
+                                                Icon(imageVector = Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Pause")
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        TextButton(
+                                            onClick = { onCancelTransfer(transfer.id) },
+                                            colors = ButtonDefaults.textButtonColors(contentColor = GhDarkAccentRed),
+                                            modifier = Modifier.testTag("cancel_transfer_btn")
+                                        ) {
+                                            Text("Cancel")
+                                        }
                                     }
                                 }
                             }
@@ -275,7 +309,9 @@ fun TransfersScreen(
                             color = MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(12.dp),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { inspectingTransferId = transfer.id }
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(
@@ -339,7 +375,7 @@ fun TransfersScreen(
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -349,15 +385,23 @@ fun TransfersScreen(
                                     val dateStr = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(transfer.createdAt))
                                     Text(text = dateStr, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                                    Row {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TextButton(
+                                            onClick = { inspectingTransferId = transfer.id },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                        ) {
+                                            Text("Details", fontSize = 11.sp)
+                                        }
+
                                         if (transfer.status == "FAILED") {
                                             TextButton(
-                                                onClick = { onRetryTransfer(transfer.id) },
+                                                onClick = { showRetryDialogTransferId = transfer.id },
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                                             ) {
-                                                Text("Retry", fontSize = 11.sp)
+                                                Text("Retry", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                                             }
                                         }
+
                                         IconButton(
                                             onClick = { onDeleteTransfer(transfer.id) },
                                             modifier = Modifier.size(28.dp)
@@ -372,6 +416,142 @@ fun TransfersScreen(
                 }
             }
         }
+    }
+
+    // Inspect Items Dialog
+    if (inspectingTransferId != null) {
+        val itemsFlow = remember(inspectingTransferId) { getItemsForTransfer(inspectingTransferId!!) }
+        val items by itemsFlow.collectAsState(initial = emptyList())
+        val transfer = transfers.find { it.id == inspectingTransferId }
+
+        AlertDialog(
+            onDismissRequest = { inspectingTransferId = null },
+            title = {
+                Text(
+                    text = "Transfer Items (${items.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    transfer?.let {
+                        Text(
+                            text = "${it.repoOwner}/${it.repoName} (${it.branch})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    if (items.isEmpty()) {
+                        Text("No items tracked for this transfer.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 350.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(items) { item ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = item.relativePath,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            StatusBadge(status = item.status)
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = formatBytes(item.sizeBytes),
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (item.blobSha != null) {
+                                                Text(
+                                                    text = "Blob: ${item.blobSha.take(7)}",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = GhDarkAccentPurple
+                                                )
+                                            }
+                                        }
+                                        if (item.errorMessage != null) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = item.errorMessage,
+                                                fontSize = 10.sp,
+                                                color = GhDarkAccentRed,
+                                                maxLines = 2
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { inspectingTransferId = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // Retry Options Dialog
+    if (showRetryDialogTransferId != null) {
+        val transferId = showRetryDialogTransferId!!
+        AlertDialog(
+            onDismissRequest = { showRetryDialogTransferId = null },
+            title = { Text("Retry Transfer") },
+            text = {
+                Text(
+                    text = "Would you like to retry only the files that failed, or restart the whole transfer from the beginning?",
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRetryTransfer(transferId, true)
+                        showRetryDialogTransferId = null
+                    }
+                ) {
+                    Text("Retry Failed Files")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        onRetryTransfer(transferId, false)
+                        showRetryDialogTransferId = null
+                    }
+                ) {
+                    Text("Restart All")
+                }
+            }
+        )
     }
 }
 

@@ -13,13 +13,8 @@ import com.example.data.repository.GitHubRepository
 import com.example.data.repository.TransferRepository
 import com.example.domain.model.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipEntry
@@ -63,10 +58,10 @@ class TransferEngine(
                         excludedItems.add(
                             DiffItem(
                                 localPath = relativePath,
-                                remotePath = relativePath,
+                                remotePath = "",
                                 changeType = DiffChangeType.EXCLUDED,
-                                sizeBytes = 0L,
-                                reason = reason
+                                sizeBytes = 0,
+                                reason = reason ?: "Excluded folder rule ($name)"
                             )
                         )
                     } else {
@@ -79,10 +74,10 @@ class TransferEngine(
                         excludedItems.add(
                             DiffItem(
                                 localPath = relativePath,
-                                remotePath = relativePath,
+                                remotePath = "",
                                 changeType = DiffChangeType.EXCLUDED,
                                 sizeBytes = size,
-                                reason = reason
+                                reason = reason ?: "Matched exclude rule ($name)"
                             )
                         )
                     } else {
@@ -112,7 +107,7 @@ class TransferEngine(
 
         for (uri in uris) {
             val doc = DocumentFile.fromSingleUri(context, uri) ?: continue
-            val name = doc.name ?: "file_${System.currentTimeMillis()}"
+            val name = doc.name ?: "file_${UUID.randomUUID().toString().take(6)}"
             val size = doc.length()
 
             val (ignored, reason) = ignoreRules.isIgnored(name, false, size)
@@ -120,10 +115,10 @@ class TransferEngine(
                 excludedItems.add(
                     DiffItem(
                         localPath = name,
-                        remotePath = name,
+                        remotePath = "",
                         changeType = DiffChangeType.EXCLUDED,
                         sizeBytes = size,
-                        reason = reason
+                        reason = reason ?: "Matched exclude rule"
                     )
                 )
             } else {
@@ -137,10 +132,11 @@ class TransferEngine(
                 )
             }
         }
+
         Pair(scannedFiles, excludedItems)
     }
 
-    // 2. Preflight Validator
+    // 2. Preflight Safety Validation
     suspend fun runPreflight(
         owner: String,
         repo: String,
@@ -150,79 +146,109 @@ class TransferEngine(
         isWipe: Boolean
     ): PreflightReport = withContext(Dispatchers.IO) {
         val checks = mutableListOf<PreflightCheckItem>()
-        var errors = 0
         var warnings = 0
+        var errors = 0
+        val totalBytes = files.sumOf { it.sizeBytes }
 
-        // Check 1: Repo accessibility
-        val repoResult = gitHubRepository.getUserRepos()
-        if (repoResult.isFailure) {
-            checks.add(PreflightCheckItem("Repository Access", CheckLevel.FAIL, "Cannot access GitHub repositories: ${repoResult.exceptionOrNull()?.message}"))
-            errors++
+        // A. Branch & Repo Reachability
+        val branchRes = gitHubRepository.getBranchHeadSha(owner, repo, branch)
+        if (branchRes.isSuccess) {
+            checks.add(
+                PreflightCheckItem(
+                    title = "Repository & Branch Access",
+                    level = CheckLevel.PASS,
+                    detail = "Branch '$branch' reachable. Current HEAD: ${branchRes.getOrThrow().take(8)}"
+                )
+            )
         } else {
-            checks.add(PreflightCheckItem("Repository Access", CheckLevel.PASS, "Authenticated access confirmed for $owner/$repo"))
+            errors++
+            checks.add(
+                PreflightCheckItem(
+                    title = "Repository & Branch Access",
+                    level = CheckLevel.FAIL,
+                    detail = "Cannot access branch '$branch': ${branchRes.exceptionOrNull()?.message}"
+                )
+            )
         }
 
-        // Check 2: Branch existence
-        val branchResult = gitHubRepository.getBranches(owner, repo)
-        if (branchResult.isFailure) {
-            checks.add(PreflightCheckItem("Branch Verification", CheckLevel.FAIL, "Could not fetch branches for $owner/$repo"))
-            errors++
-        } else {
-            val branchObj = branchResult.getOrNull()?.find { it.name == branch }
-            if (branchObj == null) {
-                checks.add(PreflightCheckItem("Branch Verification", CheckLevel.FAIL, "Branch '$branch' does not exist on remote repository"))
-                errors++
-            } else {
-                if (branchObj.isProtected) {
-                    if (isWipe) {
-                        checks.add(PreflightCheckItem("Protected Branch", CheckLevel.FAIL, "Branch '$branch' has branch protection enabled. Wipe cannot proceed on protected branches."))
-                        errors++
-                    } else {
-                        checks.add(PreflightCheckItem("Protected Branch", CheckLevel.WARN, "Branch '$branch' is protected. Commits may require pull requests."))
-                        warnings++
-                    }
-                } else {
-                    checks.add(PreflightCheckItem("Branch Verification", CheckLevel.PASS, "Branch '$branch' verified"))
-                }
+        // B. GitHub 100MB Hard File Limit
+        val max100Mb = 100L * 1024 * 1024
+        val oversizeFiles = files.filter { it.sizeBytes > max100Mb }
+        if (oversizeFiles.isNotEmpty()) {
+            errors += oversizeFiles.size
+            oversizeFiles.forEach { f ->
+                checks.add(
+                    PreflightCheckItem(
+                        title = "File Size Limit Exceeded (>100MB)",
+                        level = CheckLevel.FAIL,
+                        detail = "${f.relativePath} is ${formatBytes(f.sizeBytes)}. GitHub rejects files >100MB without Git LFS."
+                    )
+                )
             }
-        }
-
-        // Check 3: File count & sizes
-        var totalBytes = 0L
-        var largeFilesCount = 0
-        for (f in files) {
-            totalBytes += f.sizeBytes
-            if (f.sizeBytes > 100 * 1024 * 1024) { // GitHub 100MB file limit
-                largeFilesCount++
-            }
-        }
-
-        if (files.isEmpty()) {
-            checks.add(PreflightCheckItem("Files Selected", CheckLevel.FAIL, "No files selected or all files excluded"))
-            errors++
         } else {
-            checks.add(PreflightCheckItem("Files Scanned", CheckLevel.PASS, "${files.size} local files ready (${formatBytes(totalBytes)})"))
+            checks.add(
+                PreflightCheckItem(
+                    title = "File Size Ceiling",
+                    level = CheckLevel.PASS,
+                    detail = "All ${files.size} files are within GitHub's 100MB per-file upload limit."
+                )
+            )
         }
 
-        if (largeFilesCount > 0) {
-            checks.add(PreflightCheckItem("GitHub Size Limit", CheckLevel.FAIL, "$largeFilesCount file(s) exceed GitHub's 100MB regular file size limit"))
-            errors++
-        }
-
-        // Check 4: Destination path safety
-        val normalizedDest = normalizeDestination(destinationDir)
-        if (normalizedDest.contains("..")) {
-            checks.add(PreflightCheckItem("Destination Safety", CheckLevel.FAIL, "Path traversal ('..') detected in destination path"))
-            errors++
-        } else {
-            val destDisplay = if (normalizedDest.isEmpty()) "Repository Root (/)" else "/$normalizedDest/"
-            checks.add(PreflightCheckItem("Destination Path", CheckLevel.PASS, "Target destination: $destDisplay"))
-        }
-
-        // Check 5: Wipe warning
-        if (isWipe) {
-            checks.add(PreflightCheckItem("Wipe Mode", CheckLevel.WARN, "Wipe is enabled. Existing tracked files on branch '$branch' will be replaced."))
+        // C. Warning for Large Batches (>50MB total or >500 files)
+        if (totalBytes > 50L * 1024 * 1024) {
             warnings++
+            checks.add(
+                PreflightCheckItem(
+                    title = "Large Transfer Payload",
+                    level = CheckLevel.WARN,
+                    detail = "Total upload payload is ${formatBytes(totalBytes)}. Ensure steady network connectivity."
+                )
+            )
+        }
+
+        if (files.size > 500) {
+            warnings++
+            checks.add(
+                PreflightCheckItem(
+                    title = "High File Count",
+                    level = CheckLevel.WARN,
+                    detail = "${files.size} files to upload. Upload rate limiting will throttle to prevent 403 secondary rate limits."
+                )
+            )
+        }
+
+        // D. Wipe-Before-Upload Warning
+        if (isWipe) {
+            warnings++
+            checks.add(
+                PreflightCheckItem(
+                    title = "Destructive Wipe-Before-Upload Enabled",
+                    level = CheckLevel.WARN,
+                    detail = "All remote files in the branch not present in the local upload will be deleted."
+                )
+            )
+        }
+
+        // E. Destination path validation
+        val normalized = normalizeDestination(destinationDir)
+        if (normalized.contains("//") || normalized.contains("..")) {
+            errors++
+            checks.add(
+                PreflightCheckItem(
+                    title = "Destination Path Syntax",
+                    level = CheckLevel.FAIL,
+                    detail = "Destination path '$destinationDir' contains invalid traversal tokens."
+                )
+            )
+        } else {
+            checks.add(
+                PreflightCheckItem(
+                    title = "Destination Path",
+                    level = CheckLevel.PASS,
+                    detail = if (normalized.isEmpty()) "Target: Repository root (/)" else "Target folder: /$normalized/"
+                )
+            )
         }
 
         PreflightReport(
@@ -234,7 +260,7 @@ class TransferEngine(
         )
     }
 
-    // 3. Diff Calculation
+    // 3. Diff Calculation with Exact Git Blob Hash Comparison
     suspend fun calculateDiff(
         owner: String,
         repo: String,
@@ -246,7 +272,7 @@ class TransferEngine(
     ): DiffReport = withContext(Dispatchers.IO) {
         val normalizedDest = normalizeDestination(destinationDir)
 
-        // Try to fetch remote tree
+        // Fetch remote tree
         val headShaRes = gitHubRepository.getBranchHeadSha(owner, repo, branch)
         val remoteMap = mutableMapOf<String, GitTreeItemDto>()
 
@@ -286,15 +312,22 @@ class TransferEngine(
                     )
                 )
             } else {
-                // If remote exists and same size, tentatively unchanged or modified
-                if (remoteItem.size == local.sizeBytes) {
+                // Compute exact streaming Git blob SHA
+                val localSha = try {
+                    GitBlobHasher.calculateSha(context, local.uri, local.sizeBytes)
+                } catch (e: Exception) {
+                    null
+                }
+
+                if (localSha != null && localSha.equals(remoteItem.sha, ignoreCase = true)) {
                     unchanged++
                     diffItems.add(
                         DiffItem(
                             localPath = local.relativePath,
                             remotePath = finalPath,
                             changeType = DiffChangeType.UNCHANGED,
-                            sizeBytes = local.sizeBytes
+                            sizeBytes = local.sizeBytes,
+                            reason = "Identical Git blob SHA ($localSha)"
                         )
                     )
                 } else {
@@ -304,7 +337,8 @@ class TransferEngine(
                             localPath = local.relativePath,
                             remotePath = finalPath,
                             changeType = DiffChangeType.MODIFIED,
-                            sizeBytes = local.sizeBytes
+                            sizeBytes = local.sizeBytes,
+                            reason = if (localSha != null) "Blob SHA differs: remote=${remoteItem.sha.take(8)}, local=${localSha.take(8)}" else null
                         )
                     )
                 }
@@ -330,7 +364,6 @@ class TransferEngine(
             }
         }
 
-        // Add excluded
         diffItems.addAll(excludedItems)
 
         DiffReport(
@@ -343,7 +376,7 @@ class TransferEngine(
         )
     }
 
-    // 4. Upload Execution
+    // 4. Memory-Safe Upload Execution
     fun startUpload(
         owner: String,
         repo: String,
@@ -378,12 +411,21 @@ class TransferEngine(
 
         val itemEntities = files.map { f ->
             val finalPath = buildFinalGitHubPath(normalizedDest, f.relativePath)
+            val localSha = try {
+                GitBlobHasher.calculateSha(context, f.uri, f.sizeBytes)
+            } catch (e: Exception) {
+                null
+            }
             TransferItemEntity(
                 transferId = transferId,
                 relativePath = f.relativePath,
                 githubPath = finalPath,
                 sizeBytes = f.sizeBytes,
-                status = "PENDING"
+                status = "PENDING",
+                sha = localSha,
+                blobSha = null,
+                localUri = f.uri.toString(),
+                processedBytes = 0L
             )
         }
 
@@ -392,7 +434,7 @@ class TransferEngine(
         val job = engineScope.launch {
             transferRepository.insertTransfer(entity)
             transferRepository.insertItems(itemEntities)
-            executeUploadJob(transferId, entity, files, normalizedDest)
+            executeUploadJob(transferId, entity)
         }
         activeJobs[transferId] = job
         return transferId
@@ -400,9 +442,7 @@ class TransferEngine(
 
     private suspend fun executeUploadJob(
         transferId: String,
-        initialEntity: TransferEntity,
-        files: List<FileScanItem>,
-        normalizedDest: String
+        initialEntity: TransferEntity
     ) = withContext(Dispatchers.IO) {
         var entity = initialEntity
         try {
@@ -411,96 +451,163 @@ class TransferEngine(
 
             val headShaRes = gitHubRepository.getBranchHeadSha(entity.repoOwner, entity.repoName, entity.branch)
             if (headShaRes.isFailure) {
-                failTransfer(entity, "Cannot find branch head SHA: ${headShaRes.exceptionOrNull()?.message}")
+                failTransfer(entity, "Cannot resolve branch head: ${headShaRes.exceptionOrNull()?.message}")
                 return@withContext
             }
             val headCommitSha = headShaRes.getOrThrow()
 
-            val baseTreeSha = if (entity.isWipe) {
-                null // Brand new tree without existing files!
-            } else {
-                val treeShaRes = gitHubRepository.getCommitTreeSha(entity.repoOwner, entity.repoName, headCommitSha)
-                if (treeShaRes.isFailure) {
-                    failTransfer(entity, "Cannot resolve base tree: ${treeShaRes.exceptionOrNull()?.message}")
-                    return@withContext
+            // Fetch remote tree map for unchanged blob reuse
+            val remoteMap = mutableMapOf<String, GitTreeItemDto>()
+            val treeShaRes = gitHubRepository.getCommitTreeSha(entity.repoOwner, entity.repoName, headCommitSha)
+            if (treeShaRes.isSuccess) {
+                val treeRes = gitHubRepository.getTree(entity.repoOwner, entity.repoName, treeShaRes.getOrThrow(), recursive = true)
+                if (treeRes.isSuccess) {
+                    for (item in treeRes.getOrThrow().tree) {
+                        if (item.type == "blob") {
+                            remoteMap[item.path] = item
+                        }
+                    }
                 }
-                treeShaRes.getOrThrow()
             }
 
-            // STEP 2: UPLOADING BLOBS
+            val baseTreeSha = if (entity.isWipe) {
+                null // Clean slate: all non-uploaded files in tree removed!
+            } else {
+                treeShaRes.getOrNull()
+            }
+
+            // STEP 2: UPLOADING BLOBS (Memory-Safe Streaming)
             updateTransferStatus(entity.copy(status = TransferStatus.UPLOADING.name))
             val treeEntries = mutableListOf<CreateTreeEntryDto>()
-            val items = transferRepository.getItemsForTransferSync(transferId).associateBy { it.relativePath }.toMutableMap()
+            val items = transferRepository.getItemsForTransferSync(transferId).toMutableList()
 
             var processedFiles = 0
             var processedBytes = 0L
             var lastSpeedTimestamp = System.currentTimeMillis()
             var bytesSinceLastSpeed = 0L
 
-            for (file in files) {
+            for (item in items) {
                 if (pausedTransfers.contains(transferId)) {
                     updateTransferStatus(entity.copy(status = TransferStatus.PAUSED.name))
                     return@withContext
                 }
-                if (!coroutineContext.isActive) return@withContext
+                if (!coroutineContext.isActive) {
+                    if (pausedTransfers.contains(transferId)) {
+                        updateTransferStatus(entity.copy(status = TransferStatus.PAUSED.name))
+                    }
+                    return@withContext
+                }
 
-                val itemEntity = items[file.relativePath]
-                val finalPath = buildFinalGitHubPath(normalizedDest, file.relativePath)
+                // If item was already successfully uploaded (e.g. from previous run / resume)
+                if (item.status == "SUCCESS" && !item.blobSha.isNullOrEmpty()) {
+                    treeEntries.add(
+                        CreateTreeEntryDto(
+                            path = item.githubPath,
+                            mode = "100644",
+                            type = "blob",
+                            sha = item.blobSha
+                        )
+                    )
+                    processedFiles++
+                    processedBytes += item.sizeBytes
+                    continue
+                }
 
-                // Update current file
+                // Check if file on GitHub is already identical in SHA and size (blob reuse!)
+                val remoteExisting = remoteMap[item.githubPath]
+                if (!entity.isWipe && remoteExisting != null && !item.sha.isNullOrEmpty() && item.sha.equals(remoteExisting.sha, ignoreCase = true)) {
+                    treeEntries.add(
+                        CreateTreeEntryDto(
+                            path = item.githubPath,
+                            mode = "100644",
+                            type = "blob",
+                            sha = remoteExisting.sha
+                        )
+                    )
+                    transferRepository.updateItem(
+                        item.copy(status = "SUCCESS", blobSha = remoteExisting.sha, processedBytes = item.sizeBytes)
+                    )
+                    processedFiles++
+                    processedBytes += item.sizeBytes
+                    continue
+                }
+
+                // Update current file status
                 entity = entity.copy(
-                    currentFile = file.relativePath,
+                    currentFile = item.relativePath,
                     processedFiles = processedFiles,
                     processedBytes = processedBytes
                 )
                 transferRepository.updateTransfer(entity)
+                transferRepository.updateItem(item.copy(status = "IN_PROGRESS"))
 
-                // Read file bytes via SAF streaming
-                val base64Content = readFileAsBase64(file.uri)
-                if (base64Content == null) {
-                    itemEntity?.let {
-                        transferRepository.updateItem(it.copy(status = "FAILED", errorMessage = "Failed to read local file"))
-                    }
+                val fileUri = item.localUri?.let { Uri.parse(it) }
+                if (fileUri == null) {
+                    transferRepository.updateItem(
+                        item.copy(status = "FAILED", errorMessage = "Missing local file URI")
+                    )
                     continue
                 }
 
-                // Upload blob with retry
-                val blobSha = uploadBlobWithRetry(entity.repoOwner, entity.repoName, base64Content)
-                if (blobSha != null) {
+                // Stream file as base64 chunked body directly into OkHttp sink
+                var uploadedBlobSha: String? = null
+                var attempt = 0
+                var lastErr: String? = null
+
+                while (attempt < 3 && uploadedBlobSha == null) {
+                    attempt++
+                    try {
+                        val streamingBody = StreamingBlobRequestBody(
+                            context = context,
+                            uri = fileUri,
+                            size = item.sizeBytes
+                        ) { bytesSent ->
+                            val currentProcessed = processedBytes + bytesSent
+                            val now = System.currentTimeMillis()
+                            bytesSinceLastSpeed += 12288
+                            if (now - lastSpeedTimestamp >= 1000) {
+                                val dur = (now - lastSpeedTimestamp) / 1000.0
+                                val speed = (bytesSinceLastSpeed / dur).toLong()
+                                transferSpeeds[transferId] = speed
+                                lastSpeedTimestamp = now
+                                bytesSinceLastSpeed = 0L
+                            }
+                        }
+
+                        val blobRes = gitHubRepository.createBlobStream(entity.repoOwner, entity.repoName, streamingBody)
+                        if (blobRes.isSuccess) {
+                            uploadedBlobSha = blobRes.getOrThrow()
+                        } else {
+                            lastErr = blobRes.exceptionOrNull()?.message
+                            delay(500L * attempt)
+                        }
+                    } catch (e: Exception) {
+                        lastErr = e.localizedMessage
+                        delay(500L * attempt)
+                    }
+                }
+
+                if (uploadedBlobSha != null) {
                     treeEntries.add(
                         CreateTreeEntryDto(
-                            path = finalPath,
+                            path = item.githubPath,
                             mode = "100644",
                             type = "blob",
-                            sha = blobSha
+                            sha = uploadedBlobSha
                         )
                     )
-                    itemEntity?.let {
-                        transferRepository.updateItem(it.copy(status = "SUCCESS", sha = blobSha))
-                    }
+                    transferRepository.updateItem(
+                        item.copy(status = "SUCCESS", blobSha = uploadedBlobSha, processedBytes = item.sizeBytes, errorMessage = null)
+                    )
                 } else {
-                    itemEntity?.let {
-                        transferRepository.updateItem(it.copy(status = "FAILED", errorMessage = "GitHub blob creation failed"))
-                    }
+                    transferRepository.updateItem(
+                        item.copy(status = "FAILED", errorMessage = lastErr ?: "Failed to upload blob to GitHub", retryCount = item.retryCount + 1)
+                    )
                 }
 
                 processedFiles++
-                processedBytes += file.sizeBytes
-                bytesSinceLastSpeed += file.sizeBytes
-
-                val now = System.currentTimeMillis()
-                if (now - lastSpeedTimestamp >= 1000) {
-                    val durationSec = (now - lastSpeedTimestamp) / 1000.0
-                    val speed = (bytesSinceLastSpeed / durationSec).toLong()
-                    transferSpeeds[transferId] = speed
-                    lastSpeedTimestamp = now
-                    bytesSinceLastSpeed = 0L
-                }
-
-                entity = entity.copy(
-                    processedFiles = processedFiles,
-                    processedBytes = processedBytes
-                )
+                processedBytes += item.sizeBytes
+                entity = entity.copy(processedFiles = processedFiles, processedBytes = processedBytes)
                 transferRepository.updateTransfer(entity)
             }
 
@@ -540,6 +647,13 @@ class TransferEngine(
             }
             val newCommitSha = newCommitRes.getOrThrow()
 
+            // Conditional branch update (conflict check)
+            val currentHead = gitHubRepository.getBranchHeadSha(entity.repoOwner, entity.repoName, entity.branch).getOrNull()
+            if (currentHead != null && currentHead != headCommitSha) {
+                failTransfer(entity, "Remote branch moved concurrently (conflict detected). Commit $newCommitSha created but branch ref not updated.")
+                return@withContext
+            }
+
             // Update branch ref
             val updateRefRes = gitHubRepository.updateBranchRef(
                 owner = entity.repoOwner,
@@ -549,7 +663,7 @@ class TransferEngine(
                 force = false
             )
             if (updateRefRes.isFailure) {
-                failTransfer(entity, "Branch conflict or update rejected: ${updateRefRes.exceptionOrNull()?.message}")
+                failTransfer(entity, "Branch update rejected: ${updateRefRes.exceptionOrNull()?.message}")
                 return@withContext
             }
 
@@ -568,7 +682,11 @@ class TransferEngine(
                 failTransfer(entity, "Verification mismatch: branch head did not match new commit SHA.")
             }
         } catch (e: CancellationException) {
-            updateTransferStatus(entity.copy(status = TransferStatus.CANCELLED.name))
+            if (pausedTransfers.contains(transferId)) {
+                updateTransferStatus(entity.copy(status = TransferStatus.PAUSED.name))
+            } else {
+                updateTransferStatus(entity.copy(status = TransferStatus.CANCELLED.name))
+            }
         } catch (e: Exception) {
             failTransfer(entity, "Unexpected error: ${e.localizedMessage}")
         } finally {
@@ -577,18 +695,61 @@ class TransferEngine(
         }
     }
 
-    private suspend fun uploadBlobWithRetry(owner: String, repo: String, base64: String): String? {
-        var delayMs = 500L
-        for (attempt in 1..3) {
-            val res = gitHubRepository.createBlob(owner, repo, base64)
-            if (res.isSuccess) return res.getOrThrow()
-            delay(delayMs)
-            delayMs *= 2
+    // 5. Resumability & Retry Engine
+    fun resumeTransfer(transferId: String) {
+        if (activeJobs[transferId]?.isActive == true) return
+        pausedTransfers.remove(transferId)
+
+        val job = engineScope.launch {
+            val entity = transferRepository.getTransfer(transferId) ?: return@launch
+            if (entity.type == TransferType.UPLOAD.name) {
+                updateTransferStatus(entity.copy(status = TransferStatus.QUEUED.name))
+                executeUploadJob(transferId, entity)
+            }
         }
-        return null
+        activeJobs[transferId] = job
     }
 
-    // 5. Download Execution
+    fun retryTransfer(transferId: String, failedOnly: Boolean = true) {
+        if (activeJobs[transferId]?.isActive == true) return
+        pausedTransfers.remove(transferId)
+
+        val job = engineScope.launch {
+            val entity = transferRepository.getTransfer(transferId) ?: return@launch
+            if (failedOnly) {
+                transferRepository.resetFailedItems(transferId)
+            } else {
+                transferRepository.resetAllItems(transferId)
+            }
+            updateTransferStatus(entity.copy(status = TransferStatus.QUEUED.name, errorMessage = null))
+            if (entity.type == TransferType.UPLOAD.name) {
+                executeUploadJob(transferId, entity)
+            }
+        }
+        activeJobs[transferId] = job
+    }
+
+    fun pauseTransfer(transferId: String) {
+        pausedTransfers.add(transferId)
+        activeJobs[transferId]?.cancel()
+        engineScope.launch {
+            transferRepository.getTransfer(transferId)?.let {
+                transferRepository.updateTransfer(it.copy(status = TransferStatus.PAUSED.name))
+            }
+        }
+    }
+
+    fun cancelTransfer(transferId: String) {
+        pausedTransfers.remove(transferId)
+        activeJobs[transferId]?.cancel()
+        engineScope.launch {
+            transferRepository.getTransfer(transferId)?.let {
+                transferRepository.updateTransfer(it.copy(status = TransferStatus.CANCELLED.name))
+            }
+        }
+    }
+
+    // 6. Download Execution (Single file, Recursive directory, Entire repository ZIP)
     fun startDownload(
         owner: String,
         repo: String,
@@ -598,7 +759,6 @@ class TransferEngine(
         onCreated: (String) -> Unit
     ): String {
         val transferId = UUID.randomUUID().toString()
-        val displayName = if (remotePath.isEmpty()) "$repo ($branch)" else remotePath.substringAfterLast('/')
 
         val entity = TransferEntity(
             id = transferId,
@@ -606,7 +766,7 @@ class TransferEngine(
             repoOwner = owner,
             repoName = repo,
             branch = branch,
-            sourcePath = if (remotePath.isEmpty()) "Full Repo ($branch)" else remotePath,
+            sourcePath = if (remotePath.isEmpty()) "Entire Repository ($branch)" else remotePath,
             destPath = config.destinationTreeUri.toString(),
             status = TransferStatus.QUEUED.name,
             totalFiles = 1,
@@ -643,8 +803,8 @@ class TransferEngine(
                     return@withContext
                 }
 
-            // Case A: Download as ZIP (Repository Zipball or folder zip)
-            if (config.asZip || remotePath.isEmpty()) {
+            // Case A: Whole repository ZIP download
+            if (remotePath.isEmpty() && config.asZip) {
                 updateTransferStatus(entity.copy(status = TransferStatus.DOWNLOADING.name, currentFile = "Archive.zip"))
                 val zipRes = gitHubRepository.downloadZipball(entity.repoOwner, entity.repoName, entity.branch)
                 if (zipRes.isFailure) {
@@ -654,67 +814,183 @@ class TransferEngine(
 
                 val body = zipRes.getOrThrow()
                 val zipFileName = "${entity.repoName}-${entity.branch}.zip"
-
-                if (config.asZip) {
-                    // Save directly as ZIP
-                    val targetFile = destDoc.createFile("application/zip", zipFileName)
-                        ?: run {
-                            failTransfer(entity, "Cannot create local zip file in destination")
-                            return@withContext
-                        }
-
-                    context.contentResolver.openOutputStream(targetFile.uri)?.use { out ->
-                        body.byteStream().use { input ->
-                            streamCopy(input, out) { bytesCopied ->
-                                entity = entity.copy(processedBytes = bytesCopied, totalBytes = bytesCopied)
-                                transferRepository.updateTransfer(entity)
-                            }
-                        }
+                val targetFile = destDoc.createFile("application/zip", zipFileName)
+                    ?: run {
+                        failTransfer(entity, "Cannot create local zip file in destination")
+                        return@withContext
                     }
-                } else {
-                    // Extract ZIP into destination folder preserving structure
-                    extractZipStreamToFolder(body.byteStream(), destDoc, config.overwritePolicy) { copied ->
-                        entity = entity.copy(processedBytes = copied)
-                        transferRepository.updateTransfer(entity)
+
+                context.contentResolver.openOutputStream(targetFile.uri)?.use { out ->
+                    body.byteStream().use { input ->
+                        streamCopy(input, out) { bytesCopied ->
+                            entity = entity.copy(processedBytes = bytesCopied, totalBytes = bytesCopied)
+                            transferRepository.updateTransfer(entity)
+                        }
                     }
                 }
 
-                updateTransferStatus(entity.copy(
-                    status = TransferStatus.COMPLETED.name,
-                    completedAt = System.currentTimeMillis(),
-                    currentFile = null
-                ))
+                updateTransferStatus(
+                    entity.copy(
+                        status = TransferStatus.COMPLETED.name,
+                        completedAt = System.currentTimeMillis(),
+                        currentFile = null
+                    )
+                )
                 return@withContext
             }
 
-            // Case B: Download single file or specific folder
-            updateTransferStatus(entity.copy(status = TransferStatus.DOWNLOADING.name))
-            val contentsRes = gitHubRepository.getDirectoryContents(entity.repoOwner, entity.repoName, remotePath, entity.branch)
-            if (contentsRes.isFailure) {
-                // Try as single file
-                val fileRes = gitHubRepository.getFileDetails(entity.repoOwner, entity.repoName, remotePath, entity.branch)
-                if (fileRes.isFailure) {
-                    failTransfer(entity, "Item not found on GitHub")
+            // Case B: Whole repository extracted into folder
+            if (remotePath.isEmpty() && !config.asZip) {
+                updateTransferStatus(entity.copy(status = TransferStatus.DOWNLOADING.name, currentFile = "Extracting Repository..."))
+                val zipRes = gitHubRepository.downloadZipball(entity.repoOwner, entity.repoName, entity.branch)
+                if (zipRes.isFailure) {
+                    failTransfer(entity, "Failed to download zipball: ${zipRes.exceptionOrNull()?.message}")
                     return@withContext
                 }
-                val file = fileRes.getOrThrow()
-                downloadSingleFile(file, destDoc, config.overwritePolicy)
-            } else {
-                val list = contentsRes.getOrThrow()
-                for (item in list) {
-                    if (item.isFile) {
-                        downloadSingleFile(item, destDoc, config.overwritePolicy)
+
+                val body = zipRes.getOrThrow()
+                val targetRoot = if (config.createRepoFolder) {
+                    destDoc.findFile(entity.repoName)?.takeIf { it.isDirectory }
+                        ?: destDoc.createDirectory(entity.repoName)
+                        ?: destDoc
+                } else destDoc
+
+                extractZipStreamToFolder(body.byteStream(), targetRoot, config.overwritePolicy) { copied ->
+                    entity = entity.copy(processedBytes = copied)
+                    transferRepository.updateTransfer(entity)
+                }
+
+                updateTransferStatus(
+                    entity.copy(
+                        status = TransferStatus.COMPLETED.name,
+                        completedAt = System.currentTimeMillis(),
+                        currentFile = null
+                    )
+                )
+                return@withContext
+            }
+
+            // Case C: Specific path (Single file OR recursive folder)
+            updateTransferStatus(entity.copy(status = TransferStatus.DOWNLOADING.name))
+
+            val cleanRemote = remotePath.trimStart('/').trimEnd('/')
+            val headShaRes = gitHubRepository.getBranchHeadSha(entity.repoOwner, entity.repoName, entity.branch)
+            if (headShaRes.isFailure) {
+                failTransfer(entity, "Cannot resolve branch head for download")
+                return@withContext
+            }
+
+            val treeShaRes = gitHubRepository.getCommitTreeSha(entity.repoOwner, entity.repoName, headShaRes.getOrThrow())
+            val treeRes = if (treeShaRes.isSuccess) {
+                gitHubRepository.getTree(entity.repoOwner, entity.repoName, treeShaRes.getOrThrow(), recursive = true)
+            } else null
+
+            val allTreeItems = treeRes?.getOrNull()?.tree ?: emptyList()
+            val targetBlobs = allTreeItems.filter {
+                it.type == "blob" && (it.path == cleanRemote || it.path.startsWith("$cleanRemote/"))
+            }
+
+            if (targetBlobs.isEmpty()) {
+                // Try fallback to getDirectoryContents or getFileDetails
+                val contentsRes = gitHubRepository.getDirectoryContents(entity.repoOwner, entity.repoName, cleanRemote, entity.branch)
+                if (contentsRes.isSuccess) {
+                    val list = contentsRes.getOrThrow()
+                    entity = entity.copy(totalFiles = list.size)
+                    transferRepository.updateTransfer(entity)
+
+                    for ((idx, item) in list.withIndex()) {
+                        if (item.isFile) {
+                            downloadSingleFile(item, destDoc, config.overwritePolicy)
+                            entity = entity.copy(processedFiles = idx + 1, currentFile = item.name)
+                            transferRepository.updateTransfer(entity)
+                        }
                     }
+                } else {
+                    failTransfer(entity, "Specified path not found on GitHub")
+                    return@withContext
+                }
+            } else {
+                // Target blobs found! Full recursive hierarchy download
+                val totalBytes = targetBlobs.sumOf { it.size }
+                entity = entity.copy(totalFiles = targetBlobs.size, totalBytes = totalBytes)
+                transferRepository.updateTransfer(entity)
+
+                val dirCache = mutableMapOf<String, DocumentFile>()
+                dirCache[""] = destDoc
+
+                var processedFiles = 0
+                var processedBytes = 0L
+
+                for (blob in targetBlobs) {
+                    if (pausedTransfers.contains(transferId) || !coroutineContext.isActive) {
+                        updateTransferStatus(entity.copy(status = TransferStatus.PAUSED.name))
+                        return@withContext
+                    }
+
+                    val relPathUnderTarget = if (blob.path == cleanRemote) {
+                        blob.path.substringAfterLast('/')
+                    } else {
+                        blob.path.removePrefix("$cleanRemote/").removePrefix("/")
+                    }
+
+                    val parentDir = if (relPathUnderTarget.contains('/')) {
+                        val subPath = relPathUnderTarget.substringBeforeLast('/')
+                        getOrCreateSubDir(destDoc, subPath, dirCache)
+                    } else destDoc
+
+                    val fileName = relPathUnderTarget.substringAfterLast('/')
+                    entity = entity.copy(currentFile = fileName)
+                    transferRepository.updateTransfer(entity)
+
+                    // Download raw content
+                    val rawUrl = "https://raw.githubusercontent.com/${entity.repoOwner}/${entity.repoName}/${entity.branch}/${blob.path}"
+                    val rawRes = gitHubRepository.downloadRaw(rawUrl)
+
+                    if (rawRes.isSuccess) {
+                        val existing = parentDir.findFile(fileName)
+                        if (existing != null && config.overwritePolicy == OverwritePolicy.SKIP) {
+                            processedFiles++
+                            processedBytes += blob.size
+                            continue
+                        }
+                        if (existing != null && config.overwritePolicy == OverwritePolicy.OVERWRITE) {
+                            existing.delete()
+                        }
+
+                        val targetFileDoc = parentDir.createFile("application/octet-stream", fileName)
+                        if (targetFileDoc != null) {
+                            context.contentResolver.openOutputStream(targetFileDoc.uri)?.use { out ->
+                                rawRes.getOrThrow().byteStream().use { input ->
+                                    val buffer = ByteArray(8192)
+                                    var read: Int
+                                    while (input.read(buffer).also { read = it } != -1) {
+                                        out.write(buffer, 0, read)
+                                        processedBytes += read
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    processedFiles++
+                    entity = entity.copy(processedFiles = processedFiles, processedBytes = processedBytes)
+                    transferRepository.updateTransfer(entity)
                 }
             }
 
-            updateTransferStatus(entity.copy(
-                status = TransferStatus.COMPLETED.name,
-                completedAt = System.currentTimeMillis(),
-                currentFile = null
-            ))
+            updateTransferStatus(
+                entity.copy(
+                    status = TransferStatus.COMPLETED.name,
+                    completedAt = System.currentTimeMillis(),
+                    currentFile = null
+                )
+            )
         } catch (e: CancellationException) {
-            updateTransferStatus(entity.copy(status = TransferStatus.CANCELLED.name))
+            if (pausedTransfers.contains(transferId)) {
+                updateTransferStatus(entity.copy(status = TransferStatus.PAUSED.name))
+            } else {
+                updateTransferStatus(entity.copy(status = TransferStatus.CANCELLED.name))
+            }
         } catch (e: Exception) {
             failTransfer(entity, "Download failed: ${e.localizedMessage}")
         } finally {
@@ -819,26 +1095,6 @@ class TransferEngine(
         return current
     }
 
-    fun pauseTransfer(transferId: String) {
-        pausedTransfers.add(transferId)
-        activeJobs[transferId]?.cancel()
-        engineScope.launch {
-            transferRepository.getTransfer(transferId)?.let {
-                transferRepository.updateTransfer(it.copy(status = TransferStatus.PAUSED.name))
-            }
-        }
-    }
-
-    fun cancelTransfer(transferId: String) {
-        activeJobs[transferId]?.cancel()
-        engineScope.launch {
-            transferRepository.getTransfer(transferId)?.let {
-                transferRepository.updateTransfer(it.copy(status = TransferStatus.CANCELLED.name))
-            }
-        }
-    }
-
-    // Helper functions
     private suspend fun updateTransferStatus(entity: TransferEntity) {
         transferRepository.updateTransfer(entity)
     }
@@ -851,22 +1107,6 @@ class TransferEngine(
                 completedAt = System.currentTimeMillis()
             )
         )
-    }
-
-    private fun readFileAsBase64(uri: Uri): String? {
-        return try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val buffer = ByteArray(8192)
-                val baos = ByteArrayOutputStream()
-                var bytesRead: Int
-                while (input.read(buffer).also { bytesRead = it } != -1) {
-                    baos.write(buffer, 0, bytesRead)
-                }
-                android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
-            }
-        } catch (e: Exception) {
-            null
-        }
     }
 
     private suspend fun streamCopy(input: InputStream, output: OutputStream, onProgress: suspend (Long) -> Unit) {

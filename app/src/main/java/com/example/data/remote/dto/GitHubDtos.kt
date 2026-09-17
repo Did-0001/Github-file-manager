@@ -98,7 +98,7 @@ data class CreateTreeEntryDto(
     @Json(name = "path") val path: String,
     @Json(name = "mode") val mode: String = "100644",
     @Json(name = "type") val type: String = "blob",
-    @Json(name = "sha") val sha: String
+    @Json(name = "sha") val sha: String?
 )
 
 @JsonClass(generateAdapter = true)

@@ -144,4 +144,11 @@ interface GitHubApi {
         @Path("repo") repo: String,
         @Body body: CreateBlobRequest
     ): Response<CreateBlobResponse>
+
+    @POST("repos/{owner}/{repo}/git/blobs")
+    suspend fun createBlobStream(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Body body: okhttp3.RequestBody
+    ): Response<CreateBlobResponse>
 }

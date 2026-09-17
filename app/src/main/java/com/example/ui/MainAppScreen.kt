@@ -52,6 +52,8 @@ fun MainAppScreen(
     var currentTab by remember { mutableStateOf(NavigationTab.HOME) }
     var showAuthDialog by remember { mutableStateOf(false) }
     var showRepoSelectorDialog by remember { mutableStateOf(false) }
+    var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
+    var pendingDownloadIsFile by remember { mutableStateOf(false) }
 
     val isAuthenticated by viewModel.isAuthenticated.collectAsStateWithLifecycle()
     val authUser by viewModel.authUser.collectAsStateWithLifecycle()
@@ -221,8 +223,12 @@ fun MainAppScreen(
                 NavigationTab.DOWNLOAD -> {
                     DownloadScreen(
                         selectedRepo = selectedRepo,
+                        initialPath = pendingDownloadPath,
+                        initialIsFile = pendingDownloadIsFile,
                         onOpenRepoSelector = { showRepoSelectorDialog = true },
                         onStartDownload = { remotePath, config ->
+                            pendingDownloadPath = null
+                            pendingDownloadIsFile = false
                             viewModel.startDownload(remotePath, config) {
                                 currentTab = NavigationTab.TRANSFERS
                             }
@@ -242,10 +248,17 @@ fun MainAppScreen(
                         onCreateFile = { name, content, commitMsg, cb -> viewModel.createFile(name, content, commitMsg, cb) },
                         onCreateDirectory = { name, cb -> viewModel.createDirectory(name, cb) },
                         onDeleteFile = { file, commitMsg, cb -> viewModel.deleteFile(file, commitMsg, cb) },
+                        onDeleteFilesBatch = { paths, commitMsg, cb -> viewModel.deleteFilesBatch(paths, commitMsg, cb) },
+                        onLoadFileContent = { file, cb -> viewModel.loadRawFileContent(file, cb) },
+                        onUpdateFile = { file, content, commitMsg, cb -> viewModel.updateFile(file, content, commitMsg, cb) },
                         onDownloadFile = { file ->
+                            pendingDownloadPath = file.path
+                            pendingDownloadIsFile = true
                             currentTab = NavigationTab.DOWNLOAD
                         },
-                        onDownloadCurrentFolder = {
+                        onDownloadCurrentFolder = { folder ->
+                            pendingDownloadPath = folder
+                            pendingDownloadIsFile = false
                             currentTab = NavigationTab.DOWNLOAD
                         },
                         onOpenRepoSelector = { showRepoSelectorDialog = true }
@@ -256,11 +269,14 @@ fun MainAppScreen(
                     TransfersScreen(
                         transfers = transfers,
                         onPauseTransfer = { id -> viewModel.pauseTransfer(id) },
+                        onResumeTransfer = { id -> viewModel.resumeTransfer(id) },
                         onCancelTransfer = { id -> viewModel.cancelTransfer(id) },
-                        onRetryTransfer = { id -> viewModel.retryTransfer(id) },
+                        onRetryTransfer = { id, failedOnly -> viewModel.retryTransfer(id, failedOnly) },
                         onDeleteTransfer = { id -> viewModel.deleteTransfer(id) },
+                        onClearCompleted = { viewModel.clearCompletedTransfers() },
                         onClearAll = { viewModel.clearAllTransfers() },
-                        getSpeedForTransfer = { id -> viewModel.getSpeedForTransfer(id) }
+                        getSpeedForTransfer = { id -> viewModel.getSpeedForTransfer(id) },
+                        getItemsForTransfer = { id -> viewModel.getItemsForTransfer(id) }
                     )
                 }
 

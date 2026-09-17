@@ -3,11 +3,15 @@ package com.example.ui.screens.repository
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -43,16 +47,26 @@ fun RepoBrowserScreen(
     onCreateFile: (String, String, String, (Boolean, String?) -> Unit) -> Unit,
     onCreateDirectory: (String, (Boolean, String?) -> Unit) -> Unit,
     onDeleteFile: (GitHubContentDto, String, (Boolean, String?) -> Unit) -> Unit,
+    onDeleteFilesBatch: (List<String>, String, (Boolean, String?) -> Unit) -> Unit,
+    onLoadFileContent: (GitHubContentDto, (Result<String>) -> Unit) -> Unit,
+    onUpdateFile: (GitHubContentDto, String, String, (Boolean, String?) -> Unit) -> Unit,
     onDownloadFile: (GitHubContentDto) -> Unit,
-    onDownloadCurrentFolder: () -> Unit,
+    onDownloadCurrentFolder: (String) -> Unit,
     onOpenRepoSelector: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedFileForDetail by remember { mutableStateOf<GitHubContentDto?>(null) }
+    var viewingFile by remember { mutableStateOf<GitHubContentDto?>(null) }
+    var editingFile by remember { mutableStateOf<GitHubContentDto?>(null) }
     var showCreateFileDialog by remember { mutableStateOf(false) }
     var showCreateDirDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showBatchDeleteDialog by remember { mutableStateOf(false) }
+
+    // Multi-selection state
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedPaths = remember { mutableStateListOf<String>() }
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -65,62 +79,128 @@ fun RepoBrowserScreen(
     Scaffold(
         topBar = {
             Column {
-                // Header with repo name and switcher
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                if (isSelectionMode) {
+                    // Multi-select Action Bar
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = selectedRepo?.fullName ?: "No repository",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.ForkRight,
-                                    contentDescription = null,
-                                    tint = GhDarkAccentPurple,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                IconButton(onClick = {
+                                    isSelectionMode = false
+                                    selectedPaths.clear()
+                                }) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Exit selection")
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = selectedRepo?.branch ?: "main",
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "${selectedPaths.size} selected",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
+                            }
+
+                            Row {
+                                TextButton(
+                                    onClick = {
+                                        if (selectedPaths.size == filteredContents.size) {
+                                            selectedPaths.clear()
+                                        } else {
+                                            selectedPaths.clear()
+                                            selectedPaths.addAll(filteredContents.map { it.path })
+                                        }
+                                    }
+                                ) {
+                                    Text(if (selectedPaths.size == filteredContents.size) "Deselect All" else "Select All")
+                                }
+
+                                if (selectedPaths.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { showBatchDeleteDialog = true },
+                                        modifier = Modifier.testTag("batch_delete_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete Selected",
+                                            tint = GhDarkAccentRed
+                                        )
+                                    }
+                                }
                             }
                         }
+                    }
+                } else {
+                    // Normal header with repo name and switcher
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = selectedRepo?.fullName ?: "No repository",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.ForkRight,
+                                        contentDescription = null,
+                                        tint = GhDarkAccentPurple,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = selectedRepo?.branch ?: "main",
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
 
-                        Row {
-                            IconButton(
-                                onClick = onRefresh,
-                                modifier = Modifier.testTag("browser_refresh_button")
-                            ) {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh")
-                            }
-                            IconButton(
-                                onClick = { showCreateFileDialog = true },
-                                modifier = Modifier.testTag("browser_create_file_button")
-                            ) {
-                                Icon(imageVector = Icons.Default.NoteAdd, contentDescription = "New File")
-                            }
-                            IconButton(
-                                onClick = { showCreateDirDialog = true },
-                                modifier = Modifier.testTag("browser_create_dir_button")
-                            ) {
-                                Icon(imageVector = Icons.Default.CreateNewFolder, contentDescription = "New Folder")
+                            Row {
+                                IconButton(
+                                    onClick = onRefresh,
+                                    modifier = Modifier.testTag("browser_refresh_button")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh")
+                                }
+                                IconButton(
+                                    onClick = { isSelectionMode = true },
+                                    modifier = Modifier.testTag("browser_select_mode_button")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Checklist, contentDescription = "Select")
+                                }
+                                IconButton(
+                                    onClick = { showCreateFileDialog = true },
+                                    modifier = Modifier.testTag("browser_create_file_button")
+                                ) {
+                                    Icon(imageVector = Icons.Default.NoteAdd, contentDescription = "New File")
+                                }
+                                IconButton(
+                                    onClick = { showCreateDirDialog = true },
+                                    modifier = Modifier.testTag("browser_create_dir_button")
+                                ) {
+                                    Icon(imageVector = Icons.Default.CreateNewFolder, contentDescription = "New Folder")
+                                }
                             }
                         }
                     }
@@ -158,16 +238,18 @@ fun RepoBrowserScreen(
             }
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onDownloadCurrentFolder,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.testTag("browser_download_folder_fab")
-            ) {
-                Row(modifier = Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.Download, contentDescription = null)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Download Folder")
+            if (!isSelectionMode) {
+                FloatingActionButton(
+                    onClick = { onDownloadCurrentFolder(currentPath) },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.testTag("browser_download_folder_fab")
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.Download, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (currentPath.isEmpty()) "Download Repo" else "Download Folder")
+                    }
                 }
             }
         },
@@ -211,7 +293,7 @@ fun RepoBrowserScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     // Parent directory item (..) if not at root
-                    if (currentPath.isNotEmpty()) {
+                    if (currentPath.isNotEmpty() && !isSelectionMode) {
                         item {
                             Surface(
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -256,17 +338,27 @@ fun RepoBrowserScreen(
 
                     // Directory & file items
                     items(filteredContents) { item ->
+                        val isSelected = selectedPaths.contains(item.path)
+
                         Surface(
-                            color = MaterialTheme.colorScheme.surface,
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    if (item.isDirectory) {
-                                        onNavigatePath(item.path)
+                                    if (isSelectionMode) {
+                                        if (isSelected) selectedPaths.remove(item.path)
+                                        else selectedPaths.add(item.path)
                                     } else {
-                                        selectedFileForDetail = item
+                                        if (item.isDirectory) {
+                                            onNavigatePath(item.path)
+                                        } else {
+                                            selectedFileForDetail = item
+                                        }
                                     }
                                 }
                                 .testTag("browser_item_${item.name}")
@@ -282,6 +374,18 @@ fun RepoBrowserScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
+                                    if (isSelectionMode) {
+                                        Checkbox(
+                                            checked = isSelected,
+                                            onCheckedChange = { checked ->
+                                                if (checked == true) selectedPaths.add(item.path)
+                                                else selectedPaths.remove(item.path)
+                                            },
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+
                                     Icon(
                                         imageVector = if (item.isDirectory) Icons.Default.Folder else getFileIcon(item.name),
                                         contentDescription = if (item.isDirectory) "Directory" else "File",
@@ -309,23 +413,25 @@ fun RepoBrowserScreen(
                                     }
                                 }
 
-                                if (item.isDirectory) {
-                                    Icon(
-                                        imageVector = Icons.Default.ChevronRight,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                } else {
-                                    IconButton(
-                                        onClick = { selectedFileForDetail = item },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
+                                if (!isSelectionMode) {
+                                    if (item.isDirectory) {
                                         Icon(
-                                            imageVector = Icons.Default.MoreVert,
-                                            contentDescription = "Options",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
+                                            imageVector = Icons.Default.ChevronRight,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                    } else {
+                                        IconButton(
+                                            onClick = { selectedFileForDetail = item },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MoreVert,
+                                                contentDescription = "Options",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -336,7 +442,7 @@ fun RepoBrowserScreen(
         }
     }
 
-    // File Detail Modal Sheet / Dialog
+    // File Detail Modal Dialog
     if (selectedFileForDetail != null) {
         val file = selectedFileForDetail!!
         AlertDialog(
@@ -363,16 +469,14 @@ fun RepoBrowserScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                file.htmlUrl?.let { url ->
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    context.startActivity(intent)
-                                }
+                                viewingFile = file
+                                selectedFileForDetail = null
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).testTag("dialog_view_file_button")
                         ) {
-                            Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(imageVector = Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("GitHub")
+                            Text("View")
                         }
 
                         Button(
@@ -385,6 +489,39 @@ fun RepoBrowserScreen(
                             Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Download")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                editingFile = file
+                                selectedFileForDetail = null
+                            },
+                            modifier = Modifier.weight(1f).testTag("dialog_edit_file_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Edit")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                file.htmlUrl?.let { url ->
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    context.startActivity(intent)
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("GitHub")
                         }
                     }
 
@@ -411,7 +548,186 @@ fun RepoBrowserScreen(
         )
     }
 
-    // Delete Confirmation Dialog
+    // View File Content Dialog
+    if (viewingFile != null) {
+        val file = viewingFile!!
+        var contentState by remember { mutableStateOf<String?>(null) }
+        var isLoadingContent by remember { mutableStateOf(true) }
+        var contentError by remember { mutableStateOf<String?>(null) }
+
+        LaunchedEffect(file.path) {
+            isLoadingContent = true
+            contentError = null
+            onLoadFileContent(file) { result ->
+                isLoadingContent = false
+                result.fold(
+                    onSuccess = { contentState = it },
+                    onFailure = { contentError = it.message ?: "Failed to read content" }
+                )
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { viewingFile = null },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (contentState != null) {
+                        IconButton(
+                            onClick = { clipboardManager.setText(AnnotatedString(contentState!!)) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy Content", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 150.dp, max = 400.dp)
+                ) {
+                    if (isLoadingContent) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    } else if (contentError != null) {
+                        Text(
+                            text = contentError!!,
+                            color = GhDarkAccentRed,
+                            fontSize = 12.sp,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else if (contentState != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                Text(
+                                    text = contentState!!,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            val f = viewingFile
+                            viewingFile = null
+                            editingFile = f
+                        }
+                    ) {
+                        Text("Edit")
+                    }
+                    TextButton(onClick = { viewingFile = null }) {
+                        Text("Close")
+                    }
+                }
+            }
+        )
+    }
+
+    // Edit File Dialog
+    if (editingFile != null) {
+        val file = editingFile!!
+        var fileContent by remember { mutableStateOf("") }
+        var commitMessage by remember { mutableStateOf("Update ${file.name}") }
+        var isSaving by remember { mutableStateOf(false) }
+        var isInitialLoading by remember { mutableStateOf(true) }
+        var saveError by remember { mutableStateOf<String?>(null) }
+
+        LaunchedEffect(file.path) {
+            onLoadFileContent(file) { result ->
+                isInitialLoading = false
+                result.fold(
+                    onSuccess = { fileContent = it },
+                    onFailure = { saveError = it.message }
+                )
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { if (!isSaving) editingFile = null },
+            title = { Text("Edit ${file.name}") },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (isInitialLoading) {
+                        Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = fileContent,
+                            onValueChange = { fileContent = it },
+                            label = { Text("Content") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 120.dp, max = 250.dp),
+                            maxLines = 15,
+                            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = commitMessage,
+                            onValueChange = { commitMessage = it },
+                            label = { Text("Commit Message") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (saveError != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(text = saveError!!, color = GhDarkAccentRed, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isSaving = true
+                        saveError = null
+                        onUpdateFile(file, fileContent, commitMessage) { success, err ->
+                            isSaving = false
+                            if (success) {
+                                editingFile = null
+                                onRefresh()
+                            } else {
+                                saveError = err ?: "Failed to save file"
+                            }
+                        }
+                    },
+                    enabled = !isSaving && !isInitialLoading && commitMessage.isNotBlank()
+                ) {
+                    if (isSaving) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
+                    Text("Commit Changes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingFile = null }, enabled = !isSaving) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Delete Single File Confirmation Dialog
     if (showDeleteConfirmDialog && selectedFileForDetail != null) {
         val file = selectedFileForDetail!!
         var commitMsg by remember { mutableStateOf("Delete ${file.name}") }
@@ -468,6 +784,68 @@ fun RepoBrowserScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirmDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Batch Delete Dialog
+    if (showBatchDeleteDialog && selectedPaths.isNotEmpty()) {
+        var commitMsg by remember { mutableStateOf("Delete ${selectedPaths.size} files") }
+        var isDeleting by remember { mutableStateOf(false) }
+        var batchError by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
+            onDismissRequest = { if (!isDeleting) showBatchDeleteDialog = false },
+            title = { Text("Delete ${selectedPaths.size} Items?") },
+            text = {
+                Column {
+                    Text(
+                        text = "This creates a single atomic commit that removes all ${selectedPaths.size} selected files and folders from branch '${selectedRepo?.branch}'.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = commitMsg,
+                        onValueChange = { commitMsg = it },
+                        label = { Text("Commit Message") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (batchError != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = batchError!!, color = GhDarkAccentRed, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDeleting = true
+                        batchError = null
+                        onDeleteFilesBatch(selectedPaths.toList(), commitMsg) { success, err ->
+                            isDeleting = false
+                            if (success) {
+                                showBatchDeleteDialog = false
+                                isSelectionMode = false
+                                selectedPaths.clear()
+                                onRefresh()
+                            } else {
+                                batchError = err ?: "Batch delete failed"
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GhDarkAccentRed),
+                    enabled = commitMsg.isNotBlank() && !isDeleting
+                ) {
+                    if (isDeleting) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
+                    Text("Delete All Selected")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteDialog = false }, enabled = !isDeleting) {
+                    Text("Cancel")
+                }
             }
         )
     }

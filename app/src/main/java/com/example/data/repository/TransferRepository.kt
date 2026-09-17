@@ -31,6 +31,20 @@ class TransferRepository(private val database: AppDatabase) {
 
     suspend fun clearAll() {
         database.transferDao().clearAllTransfers()
+        database.transferDao().deleteOrphanedItems()
+    }
+
+    suspend fun clearCompleted() {
+        database.transferDao().clearCompletedTransfers()
+        database.transferDao().deleteOrphanedItems()
+    }
+
+    suspend fun resetFailedItems(transferId: String) {
+        database.transferDao().resetFailedItems(transferId)
+    }
+
+    suspend fun resetAllItems(transferId: String) {
+        database.transferDao().resetAllItems(transferId)
     }
 
     fun getItemsForTransfer(transferId: String): Flow<List<TransferItemEntity>> =

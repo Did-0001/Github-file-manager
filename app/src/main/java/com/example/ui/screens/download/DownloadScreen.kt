@@ -4,11 +4,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -32,15 +29,23 @@ import com.example.ui.theme.GhDarkAccentPurple
 @Composable
 fun DownloadScreen(
     selectedRepo: SelectedRepoInfo?,
+    initialPath: String? = null,
+    initialIsFile: Boolean = false,
     onOpenRepoSelector: () -> Unit,
     onStartDownload: (remotePath: String, config: DownloadConfig) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var downloadScopeIndex by remember { mutableStateOf(0) } // 0: Whole Repo, 1: Specific Folder, 2: Single File
-    var remotePathInput by remember { mutableStateOf("") }
+    var downloadScopeIndex by remember(initialPath, initialIsFile) {
+        mutableStateOf(
+            if (initialPath.isNullOrEmpty()) 0
+            else if (initialIsFile) 2
+            else 1
+        )
+    }
+    var remotePathInput by remember(initialPath) { mutableStateOf(initialPath ?: "") }
     var destinationTreeUri by remember { mutableStateOf<Uri?>(null) }
     var destinationDisplayName by remember { mutableStateOf<String?>(null) }
-    var asZip by remember { mutableStateOf(true) }
+    var asZip by remember { mutableStateOf(false) }
     var preserveStructure by remember { mutableStateOf(true) }
     var selectedPolicy by remember { mutableStateOf(OverwritePolicy.OVERWRITE) }
 
@@ -217,7 +222,7 @@ fun DownloadScreen(
                     if (destinationTreeUri != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Destination: ${destinationDisplayName}",
+                            text = "Destination: $destinationDisplayName",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = GhDarkAccentGreen
@@ -237,7 +242,7 @@ fun DownloadScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Packaging & Extraction",
+                        text = "Packaging & Overwrite Rules",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -278,6 +283,25 @@ fun DownloadScreen(
                                 checked = preserveStructure,
                                 onCheckedChange = { preserveStructure = it }
                             )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Existing File Collision Policy", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedPolicy == OverwritePolicy.OVERWRITE,
+                                onClick = { selectedPolicy = OverwritePolicy.OVERWRITE }
+                            )
+                            Text("Overwrite", fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            RadioButton(
+                                selected = selectedPolicy == OverwritePolicy.SKIP,
+                                onClick = { selectedPolicy = OverwritePolicy.SKIP }
+                            )
+                            Text("Skip existing", fontSize = 12.sp)
                         }
                     }
 

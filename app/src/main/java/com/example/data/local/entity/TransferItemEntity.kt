@@ -16,6 +16,9 @@ data class TransferItemEntity(
     val sizeBytes: Long,
     val status: String, // PENDING, IN_PROGRESS, SUCCESS, FAILED, SKIPPED
     val sha: String? = null,
+    val blobSha: String? = null,
+    val localUri: String? = null,
     val errorMessage: String? = null,
-    val retryCount: Int = 0
+    val retryCount: Int = 0,
+    val processedBytes: Long = 0L
 )

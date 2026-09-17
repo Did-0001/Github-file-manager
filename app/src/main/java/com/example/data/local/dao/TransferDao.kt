@@ -35,12 +35,24 @@ interface TransferDao {
     @Query("DELETE FROM transfers")
     suspend fun clearAllTransfers()
 
+    @Query("DELETE FROM transfers WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED')")
+    suspend fun clearCompletedTransfers()
+
+    @Query("DELETE FROM transfer_items WHERE transferId NOT IN (SELECT id FROM transfers)")
+    suspend fun deleteOrphanedItems()
+
     // Items
     @Query("SELECT * FROM transfer_items WHERE transferId = :transferId")
     fun getItemsForTransfer(transferId: String): Flow<List<TransferItemEntity>>
 
     @Query("SELECT * FROM transfer_items WHERE transferId = :transferId")
     suspend fun getItemsForTransferSync(transferId: String): List<TransferItemEntity>
+
+    @Query("UPDATE transfer_items SET status = 'PENDING', errorMessage = null WHERE transferId = :transferId AND status = 'FAILED'")
+    suspend fun resetFailedItems(transferId: String)
+
+    @Query("UPDATE transfer_items SET status = 'PENDING', errorMessage = null, blobSha = null WHERE transferId = :transferId")
+    suspend fun resetAllItems(transferId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertItems(items: List<TransferItemEntity>)
