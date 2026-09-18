@@ -36,7 +36,8 @@ interface GitHubApi {
     suspend fun listBranches(
         @Path("owner") owner: String,
         @Path("repo") repo: String,
-        @Query("per_page") perPage: Int = 100
+        @Query("per_page") perPage: Int = 100,
+        @Query("page") page: Int = 1
     ): Response<List<GitHubBranchDto>>
 
     @GET("repos/{owner}/{repo}/branches/{branch}")

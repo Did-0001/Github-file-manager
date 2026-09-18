@@ -376,7 +376,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _ignoreRules.value = rules
     }
 
-    fun runPreflightAndDiff(destinationDir: String, isWipe: Boolean) {
+    fun runPreflightAndDiff(
+        destinationDir: String,
+        isWipe: Boolean,
+        wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE
+    ) {
         val repo = _selectedRepo.value ?: return
         val files = _scannedFiles.value
         if (files.isEmpty()) return
@@ -391,7 +395,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 branch = repo.branch,
                 destinationDir = destinationDir,
                 files = files,
-                isWipe = isWipe
+                isWipe = isWipe || wipeMode != WipeMode.NONE
             )
             _preflightReport.value = preflight
 
@@ -403,14 +407,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 destinationDir = destinationDir,
                 localFiles = files,
                 excludedItems = _excludedItems.value,
-                isWipe = isWipe
+                isWipe = isWipe || wipeMode != WipeMode.NONE,
+                wipeMode = wipeMode
             )
             _diffReport.value = diff
             _isCalculatingDiff.value = false
         }
     }
 
-    fun startUpload(destinationDir: String, commitMessage: String, isWipe: Boolean, onStarted: (String) -> Unit) {
+    fun startUpload(
+        destinationDir: String,
+        commitMessage: String,
+        isWipe: Boolean,
+        wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE,
+        onStarted: (String) -> Unit
+    ) {
         val repo = _selectedRepo.value ?: return
         val files = _scannedFiles.value
         if (files.isEmpty()) return
@@ -422,7 +433,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             destinationDir = destinationDir,
             files = files,
             commitMessage = commitMessage,
-            isWipe = isWipe,
+            isWipe = isWipe || wipeMode != WipeMode.NONE,
+            wipeMode = wipeMode,
             reviewedHeadSha = _diffReport.value?.reviewedHeadSha,
             onCreated = onStarted
         )

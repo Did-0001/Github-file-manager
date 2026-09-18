@@ -323,7 +323,12 @@ fun TransfersScreen(
                                         Icon(
                                             imageVector = if (transfer.type == "UPLOAD") Icons.Default.CloudUpload else Icons.Default.CloudDownload,
                                             contentDescription = null,
-                                            tint = if (transfer.status == "COMPLETED") GhDarkAccentGreen else if (transfer.status == "FAILED") GhDarkAccentRed else Color.Gray,
+                                            tint = when (transfer.status) {
+                                                "COMPLETED" -> GhDarkAccentGreen
+                                                "FAILED" -> GhDarkAccentRed
+                                                "CONFLICT" -> Color(0xFFF2CC60)
+                                                else -> Color.Gray
+                                            },
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -366,11 +371,12 @@ fun TransfersScreen(
 
                                 if (transfer.errorMessage != null) {
                                     Spacer(modifier = Modifier.height(4.dp))
+                                    val isConflict = transfer.status == "CONFLICT"
                                     Text(
-                                        text = "Error: ${transfer.errorMessage}",
+                                        text = if (isConflict) "Conflict: ${transfer.errorMessage}" else "Error: ${transfer.errorMessage}",
                                         fontSize = 11.sp,
-                                        color = GhDarkAccentRed,
-                                        maxLines = 2,
+                                        color = if (isConflict) Color(0xFFF2CC60) else GhDarkAccentRed,
+                                        maxLines = 3,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
@@ -393,7 +399,7 @@ fun TransfersScreen(
                                             Text("Details", fontSize = 11.sp)
                                         }
 
-                                        if (transfer.status == "FAILED") {
+                                        if (transfer.status == "FAILED" || transfer.status == "CONFLICT") {
                                             TextButton(
                                                 onClick = { showRetryDialogTransferId = transfer.id },
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)

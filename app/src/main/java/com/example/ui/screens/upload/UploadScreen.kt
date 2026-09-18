@@ -40,17 +40,18 @@ fun UploadScreen(
     isScanning: Boolean,
     ignoreRules: IgnoreRules,
     onUpdateIgnoreRules: (IgnoreRules) -> Unit,
-    onStartUpload: (destinationDir: String, commitMessage: String, isWipe: Boolean) -> Unit,
+    onStartUpload: (destinationDir: String, commitMessage: String, isWipe: Boolean, wipeMode: WipeMode) -> Unit,
     onOpenRepoSelector: () -> Unit,
     diffReport: DiffReport?,
     isCalculatingDiff: Boolean,
     preflightReport: PreflightReport?,
-    onRunPreflight: (destinationDir: String, isWipe: Boolean) -> Unit,
+    onRunPreflight: (destinationDir: String, isWipe: Boolean, wipeMode: WipeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var destinationPath by remember { mutableStateOf("") }
     var commitMessage by remember { mutableStateOf("Upload files via GitHub File Manager") }
-    var isWipeEnabled by remember { mutableStateOf(false) }
+    var wipeMode by remember { mutableStateOf(WipeMode.NONE) }
+    var pendingWipeMode by remember { mutableStateOf<WipeMode?>(null) }
     var showWipeConfirmDialog by remember { mutableStateOf(false) }
     var showIgnoreRulesDialog by remember { mutableStateOf(false) }
     var showDiffDetailsSheet by remember { mutableStateOf(false) }
@@ -349,7 +350,7 @@ fun UploadScreen(
 
                         if (scannedFiles.isNotEmpty()) {
                             TextButton(
-                                onClick = { onRunPreflight(destinationPath, isWipeEnabled) },
+                                onClick = { onRunPreflight(destinationPath, wipeMode != WipeMode.NONE, wipeMode) },
                                 contentPadding = PaddingValues(0.dp),
                                 modifier = Modifier.testTag("calculate_diff_btn")
                             ) {
@@ -429,44 +430,108 @@ fun UploadScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Wipe Checkbox & Warning
+                    val cleanDest = destinationPath.trim().trimStart('/').trimEnd('/')
+                    val isWipeActive = wipeMode != WipeMode.NONE
+
+                    // Upload Strategy & Wipe Controls
                     Surface(
-                        color = if (isWipeEnabled) GhDarkAccentRed.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        color = if (isWipeActive) GhDarkAccentRed.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
                         shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, if (isWipeEnabled) GhDarkAccentRed.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                        border = BorderStroke(1.dp, if (isWipeActive) GhDarkAccentRed.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Wipe repository branch before upload",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = if (isWipeEnabled) GhDarkAccentRed else MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Replaces remote branch contents completely with this upload. Non-matching files are removed.",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = when (wipeMode) {
+                                            WipeMode.NONE -> "Upload Strategy: Normal (Merge & Overwrite)"
+                                            WipeMode.DESTINATION -> "Upload Strategy: Destination Wipe"
+                                            WipeMode.FULL_BRANCH -> "Upload Strategy: Wipe Branch"
+                                        },
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (isWipeActive) GhDarkAccentRed else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = when (wipeMode) {
+                                            WipeMode.NONE -> "Uploads files into destination. Existing non-overlapping repository files remain intact."
+                                            WipeMode.DESTINATION -> "Cleans only files inside '/$cleanDest/'. Other folders across the branch remain untouched."
+                                            WipeMode.FULL_BRANCH -> "Cleans entire branch '${selectedRepo?.branch ?: "branch"}'. Only uploaded files will remain."
+                                        },
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Checkbox(
+                                    checked = isWipeActive,
+                                    onCheckedChange = { checked ->
+                                        if (checked) {
+                                            val target = if (cleanDest.isNotEmpty()) WipeMode.DESTINATION else WipeMode.FULL_BRANCH
+                                            pendingWipeMode = target
+                                            showWipeConfirmDialog = true
+                                        } else {
+                                            wipeMode = WipeMode.NONE
+                                            onRunPreflight(destinationPath, false, WipeMode.NONE)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("wipe_mode_checkbox")
                                 )
                             }
-                            Checkbox(
-                                checked = isWipeEnabled,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        showWipeConfirmDialog = true
-                                    } else {
-                                        isWipeEnabled = false
+
+                            if (isWipeActive) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (cleanDest.isNotEmpty()) {
+                                        FilterChip(
+                                            selected = wipeMode == WipeMode.DESTINATION,
+                                            onClick = {
+                                                if (wipeMode != WipeMode.DESTINATION) {
+                                                    pendingWipeMode = WipeMode.DESTINATION
+                                                    showWipeConfirmDialog = true
+                                                }
+                                            },
+                                            label = { Text("Destination Wipe", fontSize = 11.sp) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = GhDarkAccentRed.copy(alpha = 0.2f),
+                                                selectedLabelColor = GhDarkAccentRed
+                                            ),
+                                            modifier = Modifier.testTag("destination_wipe_radio")
+                                        )
                                     }
-                                },
-                                modifier = Modifier.testTag("wipe_mode_checkbox")
-                            )
+                                    FilterChip(
+                                        selected = wipeMode == WipeMode.FULL_BRANCH,
+                                        onClick = {
+                                            if (wipeMode != WipeMode.FULL_BRANCH) {
+                                                pendingWipeMode = WipeMode.FULL_BRANCH
+                                                showWipeConfirmDialog = true
+                                            }
+                                        },
+                                        label = { Text("Wipe Branch", fontSize = 11.sp) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = GhDarkAccentRed.copy(alpha = 0.2f),
+                                            selectedLabelColor = GhDarkAccentRed
+                                        ),
+                                        modifier = Modifier.testTag("wipe_branch_radio")
+                                    )
+                                    FilterChip(
+                                        selected = false,
+                                        onClick = {
+                                            wipeMode = WipeMode.NONE
+                                            onRunPreflight(destinationPath, false, WipeMode.NONE)
+                                        },
+                                        label = { Text("Reset to Normal", fontSize = 11.sp) },
+                                        modifier = Modifier.testTag("normal_upload_radio")
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -485,7 +550,7 @@ fun UploadScreen(
                     // Main Upload Button
                     Button(
                         onClick = {
-                            onStartUpload(destinationPath, commitMessage, isWipeEnabled)
+                            onStartUpload(destinationPath, commitMessage, wipeMode != WipeMode.NONE, wipeMode)
                         },
                         enabled = scannedFiles.isNotEmpty() && selectedRepo != null && commitMessage.isNotBlank() && (preflightReport?.errorsCount ?: 0) == 0,
                         modifier = Modifier
@@ -496,7 +561,11 @@ fun UploadScreen(
                         Icon(imageVector = Icons.Default.CloudUpload, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isWipeEnabled) "Wipe & Upload ${scannedFiles.size} Files" else "Commit & Upload ${scannedFiles.size} Files",
+                            text = when (wipeMode) {
+                                WipeMode.DESTINATION -> "Destination Wipe & Upload ${scannedFiles.size} Files"
+                                WipeMode.FULL_BRANCH -> "Wipe Branch & Upload ${scannedFiles.size} Files"
+                                WipeMode.NONE -> "Commit & Upload ${scannedFiles.size} Files"
+                            },
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -517,16 +586,21 @@ fun UploadScreen(
 
     // Wipe Confirmation Dialog
     if (showWipeConfirmDialog) {
+        val target = pendingWipeMode ?: WipeMode.FULL_BRANCH
         WipeConfirmationDialog(
             repo = selectedRepo?.fullName ?: "",
             branch = selectedRepo?.branch ?: "",
+            destinationPath = destinationPath,
+            wipeMode = target,
             onConfirm = {
-                isWipeEnabled = true
+                wipeMode = target
                 showWipeConfirmDialog = false
+                pendingWipeMode = null
+                onRunPreflight(destinationPath, true, target)
             },
             onDismiss = {
-                isWipeEnabled = false
                 showWipeConfirmDialog = false
+                pendingWipeMode = null
             }
         )
     }
@@ -573,10 +647,32 @@ fun DiffPill(text: String, color: Color) {
 fun WipeConfirmationDialog(
     repo: String,
     branch: String,
+    destinationPath: String,
+    wipeMode: WipeMode,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var confirmedCheckbox by remember { mutableStateOf(false) }
+    val cleanDest = destinationPath.trim().trimStart('/').trimEnd('/')
+    val isDestinationWipe = wipeMode == WipeMode.DESTINATION && cleanDest.isNotEmpty()
+
+    val titleText = if (isDestinationWipe) "Confirm Destination Wipe" else "Confirm Wipe Branch"
+    val warningHeader = if (isDestinationWipe) {
+        "You have selected Destination Wipe for $repo on branch '$branch'."
+    } else {
+        "You have selected Wipe Branch for $repo on branch '$branch'."
+    }
+    val warningDetail = if (isDestinationWipe) {
+        "This operation will delete any existing files located inside '/$cleanDest/' on branch '$branch' that are not in this upload. Existing files in other directories on this branch will NOT be deleted."
+    } else {
+        "This operation will create an orphaned Git tree root containing ONLY the files in your current upload. All other existing files on branch '$branch' will be wiped from this commit."
+    }
+    val ackText = if (isDestinationWipe) {
+        "I understand that existing files inside '/$cleanDest/' on this branch will be removed."
+    } else {
+        "I understand that existing repository files on branch '$branch' will be removed."
+    }
+    val buttonText = if (isDestinationWipe) "Enable Destination Wipe" else "Enable Wipe Branch"
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -584,20 +680,20 @@ fun WipeConfirmationDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = GhDarkAccentRed)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Confirm Wipe-Before-Upload")
+                Text(titleText)
             }
         },
         text = {
             Column {
                 Text(
-                    text = "You have enabled Wipe mode for $repo on branch '$branch'.",
+                    text = warningHeader,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "This operation will create an orphaned Git tree root containing ONLY the files in your current upload. Any existing files on this branch that are not in this upload will be wiped from this commit.",
+                    text = warningDetail,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 16.sp
@@ -614,7 +710,7 @@ fun WipeConfirmationDialog(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "I understand that existing repository files will be removed from this branch.",
+                        text = ackText,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = GhDarkAccentRed
@@ -629,7 +725,7 @@ fun WipeConfirmationDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = GhDarkAccentRed),
                 modifier = Modifier.testTag("confirm_wipe_action_btn")
             ) {
-                Text("Enable Wipe Mode")
+                Text(buttonText)
             }
         },
         dismissButton = {

@@ -207,8 +207,8 @@ fun MainAppScreen(
                         isScanning = isScanning,
                         ignoreRules = ignoreRules,
                         onUpdateIgnoreRules = { rules -> viewModel.updateIgnoreRules(rules) },
-                        onStartUpload = { destinationDir, commitMsg, isWipe ->
-                            viewModel.startUpload(destinationDir, commitMsg, isWipe) {
+                        onStartUpload = { destinationDir, commitMsg, isWipe, wipeMode ->
+                            viewModel.startUpload(destinationDir, commitMsg, isWipe, wipeMode) {
                                 currentTab = NavigationTab.TRANSFERS
                             }
                         },
@@ -216,7 +216,7 @@ fun MainAppScreen(
                         diffReport = diffReport,
                         isCalculatingDiff = isCalculatingDiff,
                         preflightReport = preflightReport,
-                        onRunPreflight = { dest, isWipe -> viewModel.runPreflightAndDiff(dest, isWipe) }
+                        onRunPreflight = { dest, isWipe, wipeMode -> viewModel.runPreflightAndDiff(dest, isWipe, wipeMode) }
                     )
                 }
 

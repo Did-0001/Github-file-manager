@@ -28,6 +28,9 @@ class AuthInterceptor(private val secureStorage: SecureStorage) : Interceptor {
         response.header("x-ratelimit-reset")?.toLongOrNull()?.let { reset ->
             RateLimitTracker.resetEpochSeconds = reset
         }
+        response.header("Retry-After")?.toLongOrNull()?.let { retryAfter ->
+            RateLimitTracker.recordBackoff(retryAfter)
+        }
 
         return response
     }
@@ -37,4 +40,36 @@ object RateLimitTracker {
     @Volatile var remaining: Int? = null
     @Volatile var limit: Int? = null
     @Volatile var resetEpochSeconds: Long? = null
+    @Volatile var backoffUntilEpochMs: Long = 0L
+
+    fun isRateLimited(): Boolean {
+        if (System.currentTimeMillis() < backoffUntilEpochMs) return true
+        val rem = remaining
+        val resetSec = resetEpochSeconds
+        if (rem != null && rem <= 0 && resetSec != null) {
+            val nowSec = System.currentTimeMillis() / 1000
+            return nowSec < resetSec
+        }
+        return false
+    }
+
+    fun recordBackoff(seconds: Long) {
+        val until = System.currentTimeMillis() + (seconds * 1000L)
+        if (until > backoffUntilEpochMs) {
+            backoffUntilEpochMs = until
+        }
+    }
+
+    fun getRemainingWaitSeconds(): Long {
+        val nowMs = System.currentTimeMillis()
+        if (backoffUntilEpochMs > nowMs) {
+            return (backoffUntilEpochMs - nowMs) / 1000L
+        }
+        val resetSec = resetEpochSeconds
+        if (remaining != null && remaining!! <= 0 && resetSec != null) {
+            val nowSec = nowMs / 1000L
+            return (resetSec - nowSec).coerceAtLeast(0L)
+        }
+        return 0L
+    }
 }

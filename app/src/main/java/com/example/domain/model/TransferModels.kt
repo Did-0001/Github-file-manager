@@ -19,7 +19,8 @@ enum class TransferStatus {
     COMPLETED,
     FAILED,
     CANCELLED,
-    PAUSED;
+    PAUSED,
+    CONFLICT;
 
     val isActive: Boolean
         get() = this in listOf(
@@ -95,10 +96,19 @@ enum class OverwritePolicy {
     KEEP_BOTH
 }
 
+enum class DownloadScope {
+    REPOSITORY,
+    DIRECTORY,
+    SINGLE_FILE,
+    SELECTED_ITEMS
+}
+
 data class DownloadConfig(
     val destinationTreeUri: Uri,
     val preserveStructure: Boolean = true,
-    val createRepoFolder: Boolean = true,
+    val createRepoFolder: Boolean = false,
     val overwritePolicy: OverwritePolicy = OverwritePolicy.OVERWRITE,
-    val asZip: Boolean = false
+    val asZip: Boolean = false,
+    val downloadScope: DownloadScope = DownloadScope.REPOSITORY,
+    val selectedPaths: List<String> = emptyList()
 )

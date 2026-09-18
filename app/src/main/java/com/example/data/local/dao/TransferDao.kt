@@ -17,6 +17,9 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE status IN ('QUEUED', 'SCANNING', 'VALIDATING', 'PREPARING', 'UPLOADING', 'DOWNLOADING', 'COMMITTING', 'VERIFYING', 'PAUSED') ORDER BY createdAt ASC")
     fun getActiveTransfers(): Flow<List<TransferEntity>>
 
+    @Query("SELECT * FROM transfers WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'CONFLICT') ORDER BY createdAt DESC")
+    fun getHistoryTransfers(): Flow<List<TransferEntity>>
+
     @Query("SELECT * FROM transfers WHERE id = :id")
     suspend fun getTransferById(id: String): TransferEntity?
 
@@ -35,7 +38,7 @@ interface TransferDao {
     @Query("DELETE FROM transfers")
     suspend fun clearAllTransfers()
 
-    @Query("DELETE FROM transfers WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED')")
+    @Query("DELETE FROM transfers WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'CONFLICT')")
     suspend fun clearCompletedTransfers()
 
     @Query("DELETE FROM transfer_items WHERE transferId NOT IN (SELECT id FROM transfers)")

@@ -30,6 +30,8 @@ object GitBlobHasher {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
+    fun calculateShaForStream(stream: InputStream, size: Long): String = calculateSha(stream, size)
+
     fun calculateSha(bytes: ByteArray): String {
         val md = MessageDigest.getInstance("SHA-1")
         val header = "blob ${bytes.size}\u0000".toByteArray(Charsets.US_ASCII)

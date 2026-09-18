@@ -3,6 +3,10 @@ package com.example.domain.engine
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.example.data.local.entity.TransferEntity
 import com.example.data.local.entity.TransferItemEntity
 import com.example.data.remote.dto.CreateTreeEntryDto
@@ -11,6 +15,7 @@ import com.example.data.remote.dto.GitTreeItemDto
 import com.example.data.repository.GitHubRepository
 import com.example.data.repository.TransferRepository
 import com.example.domain.model.*
+import com.example.domain.worker.TransferWorker
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.InputStream
@@ -404,6 +409,7 @@ class TransferEngine(
         files: List<FileScanItem>,
         commitMessage: String,
         isWipe: Boolean,
+        wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE,
         reviewedHeadSha: String? = null,
         onCreated: (String) -> Unit
     ): String {
@@ -425,7 +431,9 @@ class TransferEngine(
             totalBytes = totalBytes,
             processedBytes = 0L,
             commitMessage = commitMessage,
-            isWipe = isWipe,
+            isWipe = isWipe || wipeMode != WipeMode.NONE,
+            wipeMode = wipeMode.name,
+            reviewedHeadSha = reviewedHeadSha,
             createdAt = System.currentTimeMillis()
         )
 
@@ -450,6 +458,19 @@ class TransferEngine(
         val job = engineScope.launch {
             transferRepository.insertTransfer(entity)
             transferRepository.insertItems(itemEntities)
+
+            try {
+                val request = OneTimeWorkRequestBuilder<TransferWorker>()
+                    .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
+                    .addTag("transfer_$transferId")
+                    .build()
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "transfer_$transferId",
+                    ExistingWorkPolicy.KEEP,
+                    request
+                )
+            } catch (_: Exception) {}
+
             executeUploadJob(transferId, entity, reviewedHeadSha)
         }
         activeJobs[transferId] = job
@@ -459,7 +480,8 @@ class TransferEngine(
     private suspend fun executeUploadJob(
         transferId: String,
         initialEntity: TransferEntity,
-        reviewedHeadSha: String? = null
+        reviewedHeadSha: String? = null,
+        onProgress: ((currentFile: String?, processedBytes: Long, totalBytes: Long) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         var entity = initialEntity
         try {
@@ -473,11 +495,13 @@ class TransferEngine(
             }
             val headCommitSha = headShaRes.getOrThrow()
 
-            // Point 21: Verify branch head has not moved since preflight review
+            // Concurrency Check 1: Verify branch head has not moved since preflight review
             if (reviewedHeadSha != null && !headCommitSha.equals(reviewedHeadSha, ignoreCase = true)) {
-                failTransfer(
-                    entity,
-                    "Remote branch moved since preview (reviewed: ${reviewedHeadSha.take(7)}, current: ${headCommitSha.take(7)}). Upload cancelled to protect against concurrent overwrites. Please calculate a fresh diff."
+                updateTransferStatus(
+                    entity.copy(
+                        status = TransferStatus.CONFLICT.name,
+                        errorMessage = "Repository changed while this transfer was being prepared. No branch overwrite was performed. (Preview HEAD: ${reviewedHeadSha.take(7)}, Current HEAD: ${headCommitSha.take(7)})."
+                    )
                 )
                 return@withContext
             }
@@ -517,8 +541,14 @@ class TransferEngine(
                 }
             }
 
-            // Base tree for tree creation
-            val baseTreeSha = if (entity.isWipe) null else currentRootTreeSha
+            val wipeMode = try {
+                WipeMode.valueOf(entity.wipeMode)
+            } catch (_: Exception) {
+                if (entity.isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE
+            }
+
+            // Base tree for tree creation: null if FULL_BRANCH wipe, otherwise current root tree
+            val baseTreeSha = if (wipeMode == WipeMode.FULL_BRANCH) null else currentRootTreeSha
 
             // STEP 2: UPLOADING BLOBS (Memory-Safe Streaming with Carry Buffer)
             updateTransferStatus(entity.copy(status = TransferStatus.UPLOADING.name))
@@ -662,6 +692,24 @@ class TransferEngine(
                 return@withContext
             }
 
+            // If WipeMode.DESTINATION: mark unhandled remote files under destination directory for deletion
+            if (wipeMode == WipeMode.DESTINATION) {
+                val normDest = normalizeDestination(entity.destPath)
+                val prefix = if (normDest.isEmpty()) "" else "$normDest/"
+                for ((remPath, remItem) in remoteMap) {
+                    if (remPath.startsWith(prefix) && !handledPaths.contains(remPath)) {
+                        treeEntries.add(
+                            CreateTreeEntryDto(
+                                path = remPath,
+                                mode = remItem.mode ?: "100644",
+                                type = "blob",
+                                sha = null // null sha explicitly deletes entry in Git Tree API
+                            )
+                        )
+                    }
+                }
+            }
+
             if (treeEntries.isEmpty()) {
                 failTransfer(entity, "No files to commit.")
                 return@withContext
@@ -697,12 +745,14 @@ class TransferEngine(
             }
             val newCommitSha = newCommitRes.getOrThrow()
 
-            // Verify branch head hasn't moved concurrently while blobs were being created
+            // Concurrency Check 2: Verify branch head hasn't moved concurrently while blobs were being created
             val concurrentCheckRes = gitHubRepository.getBranchHeadSha(entity.repoOwner, entity.repoName, entity.branch)
             if (concurrentCheckRes.isSuccess && !concurrentCheckRes.getOrThrow().equals(headCommitSha, ignoreCase = true)) {
-                failTransfer(
-                    entity,
-                    "Remote branch was updated concurrently during upload. Commit aborted to protect repository history."
+                updateTransferStatus(
+                    entity.copy(
+                        status = TransferStatus.CONFLICT.name,
+                        errorMessage = "Repository changed while this transfer was being prepared. Remote branch was updated concurrently. No branch overwrite was performed."
+                    )
                 )
                 return@withContext
             }
@@ -717,7 +767,30 @@ class TransferEngine(
                 force = false
             )
             if (updateRefRes.isFailure) {
-                failTransfer(entity, "Failed to update branch reference: ${updateRefRes.exceptionOrNull()?.message}")
+                val err = updateRefRes.exceptionOrNull()?.message ?: "Failed to update branch reference"
+                val isConflict = err.contains("409") || err.contains("conflict", ignoreCase = true) || err.contains("422")
+                if (isConflict) {
+                    updateTransferStatus(
+                        entity.copy(
+                            status = TransferStatus.CONFLICT.name,
+                            errorMessage = "Repository changed while this transfer was being prepared. Reference update rejected due to concurrent changes. No branch overwrite was performed."
+                        )
+                    )
+                } else {
+                    failTransfer(entity, err)
+                }
+                return@withContext
+            }
+
+            // Concurrency Check 3: Verify branch head actually points to newly created commit
+            val verifyHeadRes = gitHubRepository.getBranchHeadSha(entity.repoOwner, entity.repoName, entity.branch)
+            if (verifyHeadRes.isFailure || !verifyHeadRes.getOrThrow().equals(newCommitSha, ignoreCase = true)) {
+                updateTransferStatus(
+                    entity.copy(
+                        status = TransferStatus.CONFLICT.name,
+                        errorMessage = "Branch verification failed after update: expected HEAD $newCommitSha but found ${verifyHeadRes.getOrNull()}. Repository may have been modified concurrently."
+                    )
+                )
                 return@withContext
             }
 
@@ -753,6 +826,17 @@ class TransferEngine(
         val job = engineScope.launch {
             val entity = transferRepository.getTransfer(transferId) ?: return@launch
             updateTransferStatus(entity.copy(status = TransferStatus.QUEUED.name))
+            try {
+                val request = OneTimeWorkRequestBuilder<TransferWorker>()
+                    .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
+                    .addTag("transfer_$transferId")
+                    .build()
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "transfer_$transferId",
+                    ExistingWorkPolicy.REPLACE,
+                    request
+                )
+            } catch (_: Exception) {}
             if (entity.type == TransferType.UPLOAD.name) {
                 executeUploadJob(transferId, entity)
             } else if (entity.type == TransferType.DOWNLOAD.name) {
@@ -774,6 +858,17 @@ class TransferEngine(
                 transferRepository.resetAllItems(transferId)
             }
             updateTransferStatus(entity.copy(status = TransferStatus.QUEUED.name, errorMessage = null))
+            try {
+                val request = OneTimeWorkRequestBuilder<TransferWorker>()
+                    .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
+                    .addTag("transfer_$transferId")
+                    .build()
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "transfer_$transferId",
+                    ExistingWorkPolicy.REPLACE,
+                    request
+                )
+            } catch (_: Exception) {}
             if (entity.type == TransferType.UPLOAD.name) {
                 executeUploadJob(transferId, entity)
             } else if (entity.type == TransferType.DOWNLOAD.name) {
@@ -784,6 +879,9 @@ class TransferEngine(
     }
 
     fun pauseTransfer(transferId: String) {
+        try {
+            WorkManager.getInstance(context).cancelUniqueWork("transfer_$transferId")
+        } catch (_: Exception) {}
         pausedTransfers.add(transferId)
         activeJobs[transferId]?.cancel()
         engineScope.launch {
@@ -794,6 +892,9 @@ class TransferEngine(
     }
 
     fun cancelTransfer(transferId: String) {
+        try {
+            WorkManager.getInstance(context).cancelUniqueWork("transfer_$transferId")
+        } catch (_: Exception) {}
         pausedTransfers.remove(transferId)
         activeJobs[transferId]?.cancel()
         engineScope.launch {
@@ -827,24 +928,86 @@ class TransferEngine(
             processedFiles = 0,
             totalBytes = 0L,
             processedBytes = 0L,
-            createdAt = System.currentTimeMillis()
+            createdAt = System.currentTimeMillis(),
+            asZip = config.asZip,
+            overwritePolicy = config.overwritePolicy.name,
+            preserveStructure = config.preserveStructure,
+            createRepoFolder = config.createRepoFolder,
+            downloadScope = config.downloadScope.name
         )
 
         onCreated(transferId)
 
         val job = engineScope.launch {
             transferRepository.insertTransfer(entity)
+            try {
+                val request = OneTimeWorkRequestBuilder<TransferWorker>()
+                    .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
+                    .addTag("transfer_$transferId")
+                    .build()
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "transfer_$transferId",
+                    ExistingWorkPolicy.KEEP,
+                    request
+                )
+            } catch (_: Exception) {}
             executeDownloadJob(transferId, entity, remotePath, config)
         }
         activeJobs[transferId] = job
         return transferId
     }
 
+    suspend fun executeTransferById(
+        transferId: String,
+        onProgress: ((currentFile: String?, processedBytes: Long, totalBytes: Long) -> Unit)? = null
+    ) = withContext(Dispatchers.IO) {
+        val existingJob = activeJobs[transferId]
+        if (existingJob != null && existingJob.isActive) {
+            existingJob.join()
+            return@withContext
+        }
+        val entity = transferRepository.getTransfer(transferId) ?: return@withContext
+        if (entity.status == TransferStatus.PAUSED.name || entity.status == TransferStatus.CANCELLED.name) {
+            return@withContext
+        }
+        val currentJob = coroutineContext[Job]
+        if (currentJob != null) {
+            activeJobs[transferId] = currentJob
+        }
+        if (entity.type == TransferType.UPLOAD.name) {
+            executeUploadJob(transferId, entity, entity.reviewedHeadSha, onProgress)
+        } else if (entity.type == TransferType.DOWNLOAD.name) {
+            executeDownloadJob(transferId, entity, null, null, onProgress)
+        }
+    }
+
+    private fun verifyZipIntegrity(uri: Uri): Boolean {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ZipInputStream(java.io.BufferedInputStream(stream)).use { zis ->
+                    var entryCount = 0
+                    var entry = zis.nextEntry
+                    val buf = ByteArray(4096)
+                    while (entry != null) {
+                        entryCount++
+                        while (zis.read(buf) != -1) {}
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                    }
+                    entryCount > 0
+                }
+            } ?: false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private suspend fun executeDownloadJob(
         transferId: String,
         initialEntity: TransferEntity,
         initialRemotePath: String? = null,
-        initialConfig: DownloadConfig? = null
+        initialConfig: DownloadConfig? = null,
+        onProgress: ((currentFile: String?, processedBytes: Long, totalBytes: Long) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         var entity = initialEntity
         try {
@@ -859,8 +1022,8 @@ class TransferEngine(
                 }
 
             val remotePath = initialRemotePath ?: (if (entity.sourcePath.startsWith("Entire Repository")) "" else entity.sourcePath)
-            val isZip = initialConfig?.asZip ?: entity.sourcePath.endsWith(".zip")
-            val policy = initialConfig?.overwritePolicy ?: OverwritePolicy.OVERWRITE
+            val isZip = initialConfig?.asZip ?: entity.asZip
+            val policy = initialConfig?.overwritePolicy ?: try { OverwritePolicy.valueOf(entity.overwritePolicy) } catch (_: Exception) { OverwritePolicy.OVERWRITE }
 
             // Discover and populate items if not already present
             var existingItems = transferRepository.getItemsForTransferSync(transferId)
@@ -947,6 +1110,7 @@ class TransferEngine(
                 }
 
                 val body = zipRes.getOrThrow()
+                val expectedContentLength = body.contentLength().takeIf { it > 0 } ?: 0L
                 val zipFileName = "${entity.repoName}-${entity.branch}.zip"
 
                 var targetFile = destDoc.findFile(zipFileName)
@@ -960,19 +1124,55 @@ class TransferEngine(
                         resolveUniqueFileName(destDoc, zipFileName)
                     } else zipFileName
 
-                    val created = destDoc.createFile("application/zip", finalName)
+                    val partFileName = "$finalName.part_${UUID.randomUUID().toString().take(6)}"
+                    val partFileDoc = destDoc.createFile("application/zip", partFileName)
                         ?: run {
                             failTransfer(entity, "Cannot create local zip file in destination")
                             return@withContext
                         }
 
-                    context.contentResolver.openOutputStream(created.uri)?.use { out ->
-                        body.byteStream().use { input ->
-                            streamCopy(input, out) { bytesCopied ->
-                                entity = entity.copy(processedBytes = bytesCopied, totalBytes = bytesCopied)
-                                transferRepository.updateTransfer(entity)
+                    var downloadSuccess = false
+                    try {
+                        context.contentResolver.openOutputStream(partFileDoc.uri)?.use { out ->
+                            body.byteStream().use { input ->
+                                val buffer = ByteArray(8192)
+                                var read: Int
+                                var bytesCopied = 0L
+                                var lastUpdate = System.currentTimeMillis()
+                                while (input.read(buffer).also { read = it } != -1) {
+                                    if (pausedTransfers.contains(transferId) || !coroutineContext.isActive) {
+                                        throw CancellationException("Download paused")
+                                    }
+                                    out.write(buffer, 0, read)
+                                    bytesCopied += read
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastUpdate >= 250) {
+                                        entity = entity.copy(
+                                            processedBytes = bytesCopied,
+                                            totalBytes = if (expectedContentLength > 0) expectedContentLength else bytesCopied
+                                        )
+                                        transferRepository.updateTransfer(entity)
+                                        onProgress?.invoke(finalName, bytesCopied, expectedContentLength)
+                                        lastUpdate = now
+                                    }
+                                }
                             }
                         }
+
+                        // Verify archive integrity before renaming and completing
+                        if (!verifyZipIntegrity(partFileDoc.uri)) {
+                            partFileDoc.delete()
+                            failTransfer(entity, "Downloaded ZIP file failed archive integrity verification.")
+                            return@withContext
+                        }
+
+                        partFileDoc.renameTo(finalName)
+                        downloadSuccess = true
+                    } catch (e: Exception) {
+                        partFileDoc.delete()
+                        if (e is CancellationException) throw e
+                        failTransfer(entity, "Failed to download ZIP: ${e.localizedMessage}")
+                        return@withContext
                     }
                 }
 
@@ -1015,17 +1215,18 @@ class TransferEngine(
                 }
 
                 // Zip Slip & Traversal Protection: verify path does not escape
-                val normalizedRel = File(item.relativePath).normalize().path.replace('\\', '/')
-                if (item.relativePath.split('/', '\\').any { it == ".." } || normalizedRel.startsWith("../") || normalizedRel == "..") {
+                if (ZipSecurityUtils.isPathTraversal(item.relativePath)) {
                     transferRepository.updateItem(
                         item.copy(status = "FAILED", errorMessage = "Illegal path traversal in filename: ${item.relativePath}")
                     )
                     continue
                 }
+                val normalizedRel = File(item.relativePath).normalize().path.replace('\\', '/')
 
                 entity = entity.copy(currentFile = item.relativePath, processedFiles = processedFiles, processedBytes = processedBytes)
                 transferRepository.updateTransfer(entity)
                 transferRepository.updateItem(item.copy(status = "IN_PROGRESS"))
+                onProgress?.invoke(item.relativePath, processedBytes, entity.totalBytes)
 
                 val parentPath = if (normalizedRel.contains('/')) normalizedRel.substringBeforeLast('/') else ""
                 var fileName = normalizedRel.substringAfterLast('/')

@@ -9,6 +9,7 @@ class TransferRepository(private val database: AppDatabase) {
 
     val allTransfers: Flow<List<TransferEntity>> = database.transferDao().getAllTransfers()
     val activeTransfers: Flow<List<TransferEntity>> = database.transferDao().getActiveTransfers()
+    val historyTransfers: Flow<List<TransferEntity>> = database.transferDao().getHistoryTransfers()
 
     fun observeTransfer(id: String): Flow<TransferEntity?> =
         database.transferDao().observeTransferById(id)
@@ -37,6 +38,10 @@ class TransferRepository(private val database: AppDatabase) {
     suspend fun clearCompleted() {
         database.transferDao().clearCompletedTransfers()
         database.transferDao().deleteOrphanedItems()
+    }
+
+    suspend fun clearCompletedTransfers() {
+        clearCompleted()
     }
 
     suspend fun resetFailedItems(transferId: String) {

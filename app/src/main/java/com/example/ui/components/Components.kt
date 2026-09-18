@@ -30,8 +30,9 @@ import com.example.ui.theme.*
 fun StatusBadge(status: String) {
     val (bgColor, textColor) = when (status.uppercase()) {
         "COMPLETED", "SUCCESS" -> Pair(Color(0xFF238636).copy(alpha = 0.2f), GhDarkAccentGreen)
-        "UPLOADING", "DOWNLOADING", "COMMITTING", "PREPARING" -> Pair(GhDarkAccentBlue.copy(alpha = 0.2f), GhDarkAccentBlue)
+        "UPLOADING", "DOWNLOADING", "COMMITTING", "PREPARING", "VERIFYING" -> Pair(GhDarkAccentBlue.copy(alpha = 0.2f), GhDarkAccentBlue)
         "FAILED" -> Pair(GhDarkAccentRed.copy(alpha = 0.2f), GhDarkAccentRed)
+        "CONFLICT" -> Pair(Color(0xFFD29922).copy(alpha = 0.25f), Color(0xFFF2CC60))
         "PAUSED" -> Pair(GhDarkAccentOrange.copy(alpha = 0.2f), GhDarkAccentOrange)
         "CANCELLED" -> Pair(Color.Gray.copy(alpha = 0.2f), Color.LightGray)
         else -> Pair(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)

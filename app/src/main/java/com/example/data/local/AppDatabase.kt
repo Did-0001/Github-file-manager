@@ -14,7 +14,7 @@ import com.example.data.local.entity.TransferItemEntity
         TransferEntity::class,
         TransferItemEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

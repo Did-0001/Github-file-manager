@@ -76,14 +76,14 @@ class GitHubRepository(private val apiClient: ApiClient) {
 
     suspend fun getBranches(owner: String, repo: String, page: Int = 1): Result<List<GitHubBranchDto>> {
         return try {
-            val response = apiClient.gitHubApi.listBranches(owner, repo, perPage = 100)
+            val response = apiClient.gitHubApi.listBranches(owner, repo, perPage = 100, page = page)
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(com.example.data.remote.GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(com.example.data.remote.GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -305,10 +305,13 @@ class GitHubRepository(private val apiClient: ApiClient) {
             val allItems = mutableListOf<GitTreeItemDto>()
             allItems.addAll(rootTree.tree)
 
+            val visitedTreePaths = mutableSetOf<String>()
             val pendingSubtrees = ArrayDeque<Pair<String, String>>()
             for (item in rootTree.tree) {
                 if (item.type == "tree") {
-                    pendingSubtrees.add(Pair(item.path, item.sha))
+                    if (visitedTreePaths.add(item.path)) {
+                        pendingSubtrees.add(Pair(item.path, item.sha))
+                    }
                 }
             }
 
@@ -321,9 +324,17 @@ class GitHubRepository(private val apiClient: ApiClient) {
                         val prefixedItem = subItem.copy(path = subPath)
                         allItems.add(prefixedItem)
                         if (subItem.type == "tree") {
-                            pendingSubtrees.add(Pair(subPath, subItem.sha))
+                            if (visitedTreePaths.add(subPath)) {
+                                pendingSubtrees.add(Pair(subPath, subItem.sha))
+                            }
                         }
                     }
+                } else {
+                    // Truncated tree recovery must fail the entire tree enumeration on any subtree failure
+                    val error = subRes.exceptionOrNull()
+                    return Result.failure(
+                        Exception("Truncated tree enumeration failed for subtree '$prefix' (sha: $sha): ${error?.message}")
+                    )
                 }
             }
             Result.success(allItems.distinctBy { it.path })
@@ -449,19 +460,6 @@ class GitHubRepository(private val apiClient: ApiClient) {
     }
 
     private fun parseError(response: Response<*>): String {
-        val code = response.code()
-        val errorText = try {
-            response.errorBody()?.string() ?: ""
-        } catch (e: Exception) {
-            ""
-        }
-        return when (code) {
-            401 -> "Unauthorized: Check your GitHub Personal Access Token or permissions."
-            403 -> "Forbidden: GitHub rate limit reached or insufficient repository permissions. ($errorText)"
-            404 -> "Not Found: Repository, branch, or file does not exist or you lack access."
-            409 -> "Conflict: Branch has moved remotely or cannot be updated."
-            422 -> "Unprocessable Entity: Invalid path or Git validation rejected. ($errorText)"
-            else -> "GitHub API error (HTTP $code): $errorText"
-        }
+        return com.example.data.remote.GitHubApiException.fromResponse(response).message ?: "GitHub API error (HTTP ${response.code()})"
     }
 }
