@@ -52,6 +52,7 @@ fun RepoBrowserScreen(
     onUpdateFile: (GitHubContentDto, String, String, (Boolean, String?) -> Unit) -> Unit,
     onDownloadFile: (GitHubContentDto) -> Unit,
     onDownloadCurrentFolder: (String) -> Unit,
+    onDownloadSelected: (List<String>) -> Unit = {},
     onOpenRepoSelector: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -128,9 +129,9 @@ fun RepoBrowserScreen(
                                             if (selectedPaths.size == 1) {
                                                 val single = filteredContents.find { it.path == selectedPaths.first() }
                                                 if (single != null) onDownloadFile(single)
-                                                else onDownloadCurrentFolder(currentPath)
+                                                else onDownloadSelected(selectedPaths.toList())
                                             } else {
-                                                onDownloadCurrentFolder(currentPath)
+                                                onDownloadSelected(selectedPaths.toList())
                                             }
                                         },
                                         modifier = Modifier.testTag("batch_download_button")

@@ -58,17 +58,37 @@ fun UploadScreen(
     var showPreflightDetailsSheet by remember { mutableStateOf(false) }
     var showLocalFilesList by remember { mutableStateOf(false) }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     // SAF Launchers
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        uri?.let { onScanFolder(it) }
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            onScanFolder(it)
+        }
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isNotEmpty()) onScanFiles(uris)
+        if (uris.isNotEmpty()) {
+            uris.forEach { u ->
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        u,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+            }
+            onScanFiles(uris)
+        }
     }
 
     val totalBytes = scannedFiles.sumOf { it.sizeBytes }

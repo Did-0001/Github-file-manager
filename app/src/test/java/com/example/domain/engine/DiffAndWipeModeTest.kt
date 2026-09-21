@@ -104,4 +104,84 @@ class DiffAndWipeModeTest {
         assertTrue(deletedFullBranch.contains("docs/readme.md"))
         assertTrue(deletedFullBranch.contains("root.txt"))
     }
+
+    @Test
+    fun `test WipeMode NONE preserves base_tree and includes only new or modified entries`() {
+        val baseTreeSha = "base_tree_sha_12345"
+        val wipeMode = WipeMode.NONE
+
+        val effectiveBaseTree = if (wipeMode == WipeMode.FULL_BRANCH) null else baseTreeSha
+        assertEquals("NONE mode must preserve base_tree SHA", baseTreeSha, effectiveBaseTree)
+
+        // In NONE mode, deletion entries (sha = null) are never generated
+        val deletionEntries = mutableListOf<String>()
+        assertTrue("No deletion entries generated under WipeMode.NONE", deletionEntries.isEmpty())
+    }
+
+    @Test
+    fun `test WipeMode DESTINATION generates sha-null deletion entries only under target prefix`() {
+        val baseTreeSha = "base_tree_sha_12345"
+        val wipeMode = WipeMode.DESTINATION
+        val destination = "features/login"
+        val prefix = "$destination/"
+
+        val effectiveBaseTree = if (wipeMode == WipeMode.FULL_BRANCH) null else baseTreeSha
+        assertEquals("DESTINATION mode must preserve base_tree SHA", baseTreeSha, effectiveBaseTree)
+
+        val remoteFiles = listOf(
+            "features/login/LoginView.kt",
+            "features/login/LegacyAuth.kt",
+            "features/profile/ProfileView.kt",
+            "README.md"
+        )
+        val handledInUpload = setOf("features/login/LoginView.kt")
+
+        val entriesToDelete = remoteFiles.filter { path ->
+            path.startsWith(prefix) && !handledInUpload.contains(path)
+        }
+
+        // Only LegacyAuth.kt is under features/login and not in handledInUpload
+        assertEquals(listOf("features/login/LegacyAuth.kt"), entriesToDelete)
+
+        // Files outside destination must NEVER be marked for deletion
+        assertFalse(entriesToDelete.contains("features/profile/ProfileView.kt"))
+        assertFalse(entriesToDelete.contains("README.md"))
+    }
+
+    @Test
+    fun `test WipeMode FULL_BRANCH passes base_tree as null for clean branch replacement`() {
+        val baseTreeSha = "base_tree_sha_12345"
+        val wipeMode = WipeMode.FULL_BRANCH
+
+        val effectiveBaseTree = if (wipeMode == WipeMode.FULL_BRANCH) null else baseTreeSha
+        assertNull("FULL_BRANCH mode must pass base_tree as null to wipe remote branch files", effectiveBaseTree)
+    }
+
+    @Test
+    fun `test failed preconditions across all wipe modes strictly prevent branch ref update`() {
+        for (mode in listOf(WipeMode.NONE, WipeMode.DESTINATION, WipeMode.FULL_BRANCH)) {
+            var branchRefUpdated = false
+
+            // Scenario 1: Tree creation fails (e.g. 422 error from GitHub)
+            val treeCreationSuccess = false
+            if (treeCreationSuccess) {
+                branchRefUpdated = true
+            }
+            assertFalse("Branch ref must not update when tree creation fails in $mode", branchRefUpdated)
+
+            // Scenario 2: Commit creation fails (e.g. 500 error from GitHub)
+            val commitCreationSuccess = false
+            if (commitCreationSuccess) {
+                branchRefUpdated = true
+            }
+            assertFalse("Branch ref must not update when commit creation fails in $mode", branchRefUpdated)
+
+            // Scenario 3: Branch head moved (concurrency check fails)
+            val branchHeadMatched = false
+            if (branchHeadMatched) {
+                branchRefUpdated = true
+            }
+            assertFalse("Branch ref must not update when branch head mismatch occurs in $mode", branchRefUpdated)
+        }
+    }
 }

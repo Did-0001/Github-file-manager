@@ -17,6 +17,9 @@ class TransferRepository(private val database: AppDatabase) {
     suspend fun getTransfer(id: String): TransferEntity? =
         database.transferDao().getTransferById(id)
 
+    suspend fun getActiveTransfersSync(): List<TransferEntity> =
+        database.transferDao().getActiveTransfersSync()
+
     suspend fun insertTransfer(transfer: TransferEntity) {
         database.transferDao().insertTransfer(transfer)
     }

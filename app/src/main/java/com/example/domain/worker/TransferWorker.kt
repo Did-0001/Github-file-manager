@@ -11,10 +11,13 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.example.MainActivity
 import com.example.data.local.AppDatabase
 import com.example.data.local.SecureStorage
+import com.example.data.local.entity.TransferEntity
 import com.example.data.remote.ApiClient
+import com.example.data.remote.GitHubApiException
 import com.example.data.repository.GitHubRepository
 import com.example.data.repository.TransferRepository
 import com.example.domain.engine.TransferEngine
@@ -49,7 +52,7 @@ class TransferWorker(
 
         val entity = transferRepository.getTransfer(transferId) ?: return Result.failure()
         if (entity.status == TransferStatus.PAUSED.name || entity.status == TransferStatus.CANCELLED.name) {
-            return Result.success()
+            return Result.success(workDataOf("reason" to "skipped_inactive"))
         }
 
         val notificationId = NOTIFICATION_ID_BASE + (transferId.hashCode() and 0x7FFF)
@@ -91,16 +94,117 @@ class TransferWorker(
                     notificationManager.notify(notificationId, fgInfo.notification)
                 } catch (_: Exception) {}
             }
-            Result.success()
+
+            val finalEntity = transferRepository.getTransfer(transferId)
+            mapWorkerResult(finalEntity, isStopped = isStopped, caughtException = null)
         } catch (e: CancellationException) {
-            Result.failure()
+            val finalEntity = transferRepository.getTransfer(transferId)
+            mapWorkerResult(finalEntity, isStopped = true, caughtException = e)
         } catch (e: Exception) {
-            Result.failure()
+            val finalEntity = transferRepository.getTransfer(transferId)
+            mapWorkerResult(finalEntity, isStopped = isStopped, caughtException = e)
         } finally {
             try {
                 notificationManager.cancel(notificationId)
             } catch (_: Exception) {}
         }
+    }
+
+    private fun mapWorkerResult(
+        entity: TransferEntity?,
+        isStopped: Boolean,
+        caughtException: Throwable?
+    ): Result {
+        val statusStr = entity?.status
+        val status = try { statusStr?.let { TransferStatus.valueOf(it) } } catch (_: Exception) { null }
+
+        // 1. Branch conflict
+        if (status == TransferStatus.CONFLICT) {
+            return Result.failure(
+                workDataOf(
+                    "reason" to "conflict",
+                    "error" to (entity?.errorMessage ?: "Branch conflict detected")
+                )
+            )
+        }
+
+        // 2. Pause
+        if (status == TransferStatus.PAUSED || (isStopped && status == TransferStatus.PAUSED)) {
+            return Result.success(
+                workDataOf("reason" to "pause")
+            )
+        }
+
+        // 3. Cancellation
+        if (status == TransferStatus.CANCELLED || (isStopped && caughtException is CancellationException)) {
+            return Result.failure(
+                workDataOf("reason" to "cancellation")
+            )
+        }
+
+        // 4. Completed
+        if (status == TransferStatus.COMPLETED) {
+            return Result.success(
+                workDataOf("reason" to "completed")
+            )
+        }
+
+        // 5. Retryable vs Permanent failure
+        val isRetryable = isRetryableError(caughtException, entity?.errorMessage)
+        if (isRetryable && runAttemptCount < 3) {
+            return Result.retry()
+        }
+
+        return Result.failure(
+            workDataOf(
+                "reason" to "permanent_failure",
+                "error" to (entity?.errorMessage ?: caughtException?.localizedMessage ?: "Transfer failed")
+            )
+        )
+    }
+
+    private fun isRetryableError(throwable: Throwable?, errorMessage: String?): Boolean {
+        if (throwable is GitHubApiException) {
+            return throwable.isRetryable
+        }
+        if (throwable?.cause is GitHubApiException) {
+            return (throwable.cause as GitHubApiException).isRetryable
+        }
+        if (throwable is java.net.SocketTimeoutException ||
+            throwable is java.net.UnknownHostException ||
+            throwable is java.net.ConnectException ||
+            throwable is java.net.NoRouteToHostException ||
+            throwable is java.io.InterruptedIOException ||
+            throwable is java.io.IOException) {
+            return true
+        }
+        val msg = (errorMessage ?: throwable?.message ?: "").lowercase()
+        // Non-retryable conditions take priority
+        if (msg.contains("conflict") ||
+            msg.contains("401") || msg.contains("auth") ||
+            (msg.contains("403") && !msg.contains("rate limit")) ||
+            msg.contains("404") || msg.contains("not found") ||
+            msg.contains("422") || msg.contains("validation") ||
+            msg.contains("permission revoked") ||
+            msg.contains("cannot access local") ||
+            msg.contains("directory missing") ||
+            msg.contains("file missing")
+        ) {
+            return false
+        }
+        if (msg.contains("timeout") ||
+            msg.contains("unable to resolve host") ||
+            msg.contains("connection reset") ||
+            msg.contains("failed to connect") ||
+            msg.contains("network") ||
+            msg.contains("socket") ||
+            msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504") ||
+            msg.contains("server error") ||
+            msg.contains("429") || msg.contains("rate limit")
+        ) {
+            return true
+        }
+        return false
     }
 
     private fun createForegroundInfo(

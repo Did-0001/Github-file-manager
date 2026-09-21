@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,21 +32,25 @@ fun DownloadScreen(
     selectedRepo: SelectedRepoInfo?,
     initialPath: String? = null,
     initialIsFile: Boolean = false,
+    initialSelectedPaths: List<String> = emptyList(),
     onOpenRepoSelector: () -> Unit,
     onStartDownload: (remotePath: String, config: DownloadConfig) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var downloadScopeIndex by remember(initialPath, initialIsFile) {
+    var downloadScopeIndex by remember(initialPath, initialIsFile, initialSelectedPaths) {
         mutableStateOf(
-            if (initialPath.isNullOrEmpty()) 0
+            if (initialSelectedPaths.isNotEmpty()) 3
+            else if (initialPath.isNullOrEmpty()) 0
             else if (initialIsFile) 2
             else 1
         )
     }
     var remotePathInput by remember(initialPath) { mutableStateOf(initialPath ?: "") }
+    var selectedPathsList by remember(initialSelectedPaths) { mutableStateOf(initialSelectedPaths) }
     var destinationTreeUri by remember { mutableStateOf<Uri?>(null) }
     var destinationDisplayName by remember { mutableStateOf<String?>(null) }
     var asZip by remember { mutableStateOf(false) }
+    var createRepoFolder by remember { mutableStateOf(false) }
     var preserveStructure by remember { mutableStateOf(true) }
     var selectedPolicy by remember { mutableStateOf(OverwritePolicy.OVERWRITE) }
 
@@ -159,7 +164,7 @@ fun DownloadScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     TabRow(
-                        selectedTabIndex = downloadScopeIndex,
+                        selectedTabIndex = downloadScopeIndex.coerceAtMost(if (selectedPathsList.isNotEmpty()) 3 else 2),
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,
                         contentColor = MaterialTheme.colorScheme.primary
                     ) {
@@ -178,9 +183,47 @@ fun DownloadScreen(
                             onClick = { downloadScopeIndex = 2 },
                             text = { Text("Single File", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
                         )
+                        if (selectedPathsList.isNotEmpty()) {
+                            Tab(
+                                selected = downloadScopeIndex == 3,
+                                onClick = { downloadScopeIndex = 3 },
+                                text = { Text("Selected (${selectedPathsList.size})", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                            )
+                        }
                     }
 
-                    if (downloadScopeIndex != 0) {
+                    if (downloadScopeIndex == 3 && selectedPathsList.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "${selectedPathsList.size} item(s) selected for download:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(8.dp)
+                        ) {
+                            selectedPathsList.take(5).forEach { path ->
+                                Text(
+                                    text = "• $path",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (selectedPathsList.size > 5) {
+                                Text(
+                                    text = "... and ${selectedPathsList.size - 5} more",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    } else if (downloadScopeIndex != 0) {
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = remotePathInput,
@@ -283,6 +326,25 @@ fun DownloadScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                Text("Create Repository Folder", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Places downloaded content inside a '${selectedRepo?.name ?: "repo"}' folder", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = createRepoFolder,
+                                onCheckedChange = { createRepoFolder = it },
+                                modifier = Modifier.testTag("create_repo_folder_switch")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text("Preserve Directory Hierarchy", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 Text("Recreates subfolders locally matching the GitHub tree", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -321,20 +383,36 @@ fun DownloadScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Start Download Action
+                    val isStartEnabled = destinationTreeUri != null && selectedRepo != null && (
+                        downloadScopeIndex == 0 ||
+                        (downloadScopeIndex == 3 && selectedPathsList.isNotEmpty()) ||
+                        remotePathInput.isNotBlank()
+                    )
+
                     Button(
                         onClick = {
                             if (destinationTreeUri != null) {
-                                val targetPath = if (downloadScopeIndex == 0) "" else remotePathInput.trim()
+                                val (targetPath, scope, paths) = when (downloadScopeIndex) {
+                                    0 -> Triple("", com.example.domain.model.DownloadScope.REPOSITORY, emptyList<String>())
+                                    1 -> Triple(remotePathInput.trim(), com.example.domain.model.DownloadScope.DIRECTORY, emptyList<String>())
+                                    2 -> Triple(remotePathInput.trim(), com.example.domain.model.DownloadScope.SINGLE_FILE, emptyList<String>())
+                                    3 -> Triple(if (selectedPathsList.size == 1) selectedPathsList.first() else "", com.example.domain.model.DownloadScope.SELECTED_ITEMS, selectedPathsList)
+                                    else -> Triple(remotePathInput.trim(), com.example.domain.model.DownloadScope.DIRECTORY, emptyList<String>())
+                                }
+
                                 val config = DownloadConfig(
                                     destinationTreeUri = destinationTreeUri!!,
                                     asZip = asZip,
                                     preserveStructure = preserveStructure,
-                                    overwritePolicy = selectedPolicy
+                                    createRepoFolder = createRepoFolder,
+                                    overwritePolicy = selectedPolicy,
+                                    downloadScope = scope,
+                                    selectedPaths = paths
                                 )
                                 onStartDownload(targetPath, config)
                             }
                         },
-                        enabled = destinationTreeUri != null && selectedRepo != null && (downloadScopeIndex == 0 || remotePathInput.isNotBlank()),
+                        enabled = isStartEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)

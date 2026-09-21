@@ -54,6 +54,7 @@ fun MainAppScreen(
     var showRepoSelectorDialog by remember { mutableStateOf(false) }
     var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
     var pendingDownloadIsFile by remember { mutableStateOf(false) }
+    var pendingDownloadSelectedPaths by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val isAuthenticated by viewModel.isAuthenticated.collectAsStateWithLifecycle()
     val authUser by viewModel.authUser.collectAsStateWithLifecycle()
@@ -225,10 +226,12 @@ fun MainAppScreen(
                         selectedRepo = selectedRepo,
                         initialPath = pendingDownloadPath,
                         initialIsFile = pendingDownloadIsFile,
+                        initialSelectedPaths = pendingDownloadSelectedPaths,
                         onOpenRepoSelector = { showRepoSelectorDialog = true },
                         onStartDownload = { remotePath, config ->
                             pendingDownloadPath = null
                             pendingDownloadIsFile = false
+                            pendingDownloadSelectedPaths = emptyList()
                             viewModel.startDownload(remotePath, config) {
                                 currentTab = NavigationTab.TRANSFERS
                             }
@@ -254,11 +257,19 @@ fun MainAppScreen(
                         onDownloadFile = { file ->
                             pendingDownloadPath = file.path
                             pendingDownloadIsFile = true
+                            pendingDownloadSelectedPaths = emptyList()
                             currentTab = NavigationTab.DOWNLOAD
                         },
                         onDownloadCurrentFolder = { folder ->
                             pendingDownloadPath = folder
                             pendingDownloadIsFile = false
+                            pendingDownloadSelectedPaths = emptyList()
+                            currentTab = NavigationTab.DOWNLOAD
+                        },
+                        onDownloadSelected = { paths ->
+                            pendingDownloadPath = if (paths.size == 1) paths.first() else null
+                            pendingDownloadIsFile = false
+                            pendingDownloadSelectedPaths = paths
                             currentTab = NavigationTab.DOWNLOAD
                         },
                         onOpenRepoSelector = { showRepoSelectorDialog = true }

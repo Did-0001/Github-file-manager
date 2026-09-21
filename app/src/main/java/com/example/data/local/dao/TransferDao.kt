@@ -17,6 +17,9 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE status IN ('QUEUED', 'SCANNING', 'VALIDATING', 'PREPARING', 'UPLOADING', 'DOWNLOADING', 'COMMITTING', 'VERIFYING', 'PAUSED') ORDER BY createdAt ASC")
     fun getActiveTransfers(): Flow<List<TransferEntity>>
 
+    @Query("SELECT * FROM transfers WHERE status IN ('QUEUED', 'SCANNING', 'VALIDATING', 'PREPARING', 'UPLOADING', 'DOWNLOADING', 'COMMITTING', 'VERIFYING') ORDER BY createdAt ASC")
+    suspend fun getActiveTransfersSync(): List<TransferEntity>
+
     @Query("SELECT * FROM transfers WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'CONFLICT') ORDER BY createdAt DESC")
     fun getHistoryTransfers(): Flow<List<TransferEntity>>
 

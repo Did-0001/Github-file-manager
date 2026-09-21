@@ -29,8 +29,12 @@ class StreamingBlobRequestBody(
         size = size,
         onProgress = onProgress,
         openInputStream = {
-            context.contentResolver.openInputStream(uri)
-                ?: throw IOException("Could not open stream for $uri")
+            try {
+                context.contentResolver.openInputStream(uri)
+                    ?: throw IOException("Cannot access local file: storage permission revoked or file missing ($uri)")
+            } catch (sec: SecurityException) {
+                throw IOException("Cannot access local file: storage permission revoked or expired ($uri)", sec)
+            }
         }
     )
 

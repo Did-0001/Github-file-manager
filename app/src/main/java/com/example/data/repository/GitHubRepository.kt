@@ -1,6 +1,8 @@
 package com.example.data.repository
 
 import com.example.data.remote.ApiClient
+import com.example.data.remote.ApiErrorType
+import com.example.data.remote.GitHubApiException
 import com.example.data.remote.dto.*
 import com.squareup.moshi.Types
 import okhttp3.ResponseBody
@@ -23,10 +25,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -36,10 +38,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -49,7 +51,6 @@ class GitHubRepository(private val apiClient: ApiClient) {
         while (true) {
             val pageRes = getUserRepos(page)
             if (pageRes.isFailure) {
-                if (allRepos.isNotEmpty()) return Result.success(allRepos)
                 return pageRes
             }
             val list = pageRes.getOrThrow()
@@ -67,10 +68,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -80,10 +81,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(com.example.data.remote.GitHubApiException.fromResponse(response))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(com.example.data.remote.GitHubApiException.fromThrowable(e))
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -93,7 +94,6 @@ class GitHubRepository(private val apiClient: ApiClient) {
         while (true) {
             val pageRes = getBranches(owner, repo, page)
             if (pageRes.isFailure) {
-                if (allBranches.isNotEmpty()) return Result.success(allBranches)
                 return pageRes
             }
             val list = pageRes.getOrThrow()
@@ -118,7 +118,7 @@ class GitHubRepository(private val apiClient: ApiClient) {
                     val sorted = response.body()!!.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                     return Result.success(sorted)
                 } else {
-                    return Result.failure(Exception(parseError(response)))
+                    return Result.failure(GitHubApiException.fromResponse(response))
                 }
             }
 
@@ -140,10 +140,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
                     Result.success(emptyList())
                 }
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -162,13 +162,13 @@ class GitHubRepository(private val apiClient: ApiClient) {
                 if (item != null) {
                     Result.success(item)
                 } else {
-                    Result.failure(Exception("Failed to parse file response"))
+                    Result.failure(GitHubApiException(ApiErrorType.SERVER_ERROR, message = "Failed to parse file response"))
                 }
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -193,10 +193,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful) {
                 Result.success(Unit)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -219,10 +219,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful) {
                 Result.success(Unit)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -232,10 +232,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -245,10 +245,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -259,10 +259,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.obj.sha)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -272,10 +272,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.tree.sha)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -285,17 +285,17 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
     suspend fun getFullTree(owner: String, repo: String, rootTreeSha: String): Result<List<GitTreeItemDto>> {
         return try {
             val rootRes = getTree(owner, repo, rootTreeSha, recursive = true)
-            if (rootRes.isFailure) return Result.failure(rootRes.exceptionOrNull()!!)
+            if (rootRes.isFailure) return Result.failure(rootRes.exceptionOrNull() ?: GitHubApiException(ApiErrorType.SERVER_ERROR, message = "Failed to fetch root tree"))
             val rootTree = rootRes.getOrThrow()
             if (!rootTree.truncated) {
                 return Result.success(rootTree.tree)
@@ -332,14 +332,21 @@ class GitHubRepository(private val apiClient: ApiClient) {
                 } else {
                     // Truncated tree recovery must fail the entire tree enumeration on any subtree failure
                     val error = subRes.exceptionOrNull()
-                    return Result.failure(
-                        Exception("Truncated tree enumeration failed for subtree '$prefix' (sha: $sha): ${error?.message}")
-                    )
+                    val apiException = if (error is GitHubApiException) {
+                        error
+                    } else {
+                        GitHubApiException(
+                            errorType = ApiErrorType.SERVER_ERROR,
+                            message = "Truncated tree enumeration failed for subtree '$prefix' (sha: $sha): ${error?.message}",
+                            cause = error
+                        )
+                    }
+                    return Result.failure(apiException)
                 }
             }
             Result.success(allItems.distinctBy { it.path })
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -350,10 +357,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.sha)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -363,10 +370,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.sha)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -396,7 +403,7 @@ class GitHubRepository(private val apiClient: ApiClient) {
             updateBranchRef(owner, repo, branch, newCommitSha).getOrThrow()
             Result.success(newCommitSha)
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -412,10 +419,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.sha)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -432,10 +439,10 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.sha)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
 
@@ -452,14 +459,11 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (response.isSuccessful) {
                 Result.success(Unit)
             } else {
-                Result.failure(Exception(parseError(response)))
+                Result.failure(GitHubApiException.fromResponse(response))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(GitHubApiException.fromThrowable(e))
         }
     }
-
-    private fun parseError(response: Response<*>): String {
-        return com.example.data.remote.GitHubApiException.fromResponse(response).message ?: "GitHub API error (HTTP ${response.code()})"
-    }
 }
+
