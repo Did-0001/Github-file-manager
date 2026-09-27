@@ -250,7 +250,8 @@ fun TransfersScreen(
                                 ) {
                                     TextButton(
                                         onClick = { inspectingTransferId = transfer.id },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                        modifier = Modifier.testTag("view_items_btn_${transfer.id}")
                                     ) {
                                         Icon(imageVector = Icons.Default.ListAlt, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -261,7 +262,7 @@ fun TransfersScreen(
                                         if (transfer.status == "PAUSED") {
                                             OutlinedButton(
                                                 onClick = { onResumeTransfer(transfer.id) },
-                                                modifier = Modifier.testTag("resume_transfer_btn")
+                                                modifier = Modifier.testTag("resume_transfer_btn_${transfer.id}")
                                             ) {
                                                 Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
@@ -270,7 +271,7 @@ fun TransfersScreen(
                                         } else {
                                             OutlinedButton(
                                                 onClick = { onPauseTransfer(transfer.id) },
-                                                modifier = Modifier.testTag("pause_transfer_btn")
+                                                modifier = Modifier.testTag("pause_transfer_btn_${transfer.id}")
                                             ) {
                                                 Icon(imageVector = Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
@@ -281,7 +282,7 @@ fun TransfersScreen(
                                         TextButton(
                                             onClick = { onCancelTransfer(transfer.id) },
                                             colors = ButtonDefaults.textButtonColors(contentColor = GhDarkAccentRed),
-                                            modifier = Modifier.testTag("cancel_transfer_btn")
+                                            modifier = Modifier.testTag("cancel_transfer_btn_${transfer.id}")
                                         ) {
                                             Text("Cancel")
                                         }
@@ -312,6 +313,7 @@ fun TransfersScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { inspectingTransferId = transfer.id }
+                                .testTag("past_transfer_${transfer.id}")
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(
@@ -394,7 +396,8 @@ fun TransfersScreen(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         TextButton(
                                             onClick = { inspectingTransferId = transfer.id },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                            modifier = Modifier.testTag("details_transfer_btn_${transfer.id}")
                                         ) {
                                             Text("Details", fontSize = 11.sp)
                                         }
@@ -402,7 +405,8 @@ fun TransfersScreen(
                                         if (transfer.status == "FAILED" || transfer.status == "CONFLICT") {
                                             TextButton(
                                                 onClick = { showRetryDialogTransferId = transfer.id },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                modifier = Modifier.testTag("retry_transfer_btn_${transfer.id}")
                                             ) {
                                                 Text("Retry", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                                             }
@@ -410,7 +414,9 @@ fun TransfersScreen(
 
                                         IconButton(
                                             onClick = { onDeleteTransfer(transfer.id) },
-                                            modifier = Modifier.size(28.dp)
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .testTag("delete_transfer_btn_${transfer.id}")
                                         ) {
                                             Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete", modifier = Modifier.size(16.dp))
                                         }
@@ -518,7 +524,10 @@ fun TransfersScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { inspectingTransferId = null }) {
+                TextButton(
+                    onClick = { inspectingTransferId = null },
+                    modifier = Modifier.testTag("close_items_dialog_btn")
+                ) {
                     Text("Close")
                 }
             }
@@ -542,7 +551,8 @@ fun TransfersScreen(
                     onClick = {
                         onRetryTransfer(transferId, true)
                         showRetryDialogTransferId = null
-                    }
+                    },
+                    modifier = Modifier.testTag("retry_failed_files_btn")
                 ) {
                     Text("Retry Failed Files")
                 }
@@ -552,7 +562,8 @@ fun TransfersScreen(
                     onClick = {
                         onRetryTransfer(transferId, false)
                         showRetryDialogTransferId = null
-                    }
+                    },
+                    modifier = Modifier.testTag("restart_all_btn")
                 ) {
                     Text("Restart All")
                 }

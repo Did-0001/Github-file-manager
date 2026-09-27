@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -52,6 +53,7 @@ fun MainAppScreen(
     var currentTab by remember { mutableStateOf(NavigationTab.HOME) }
     var showAuthDialog by remember { mutableStateOf(false) }
     var showRepoSelectorDialog by remember { mutableStateOf(false) }
+    var pendingUploadDestinationPath by remember { mutableStateOf<String?>(null) }
     var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
     var pendingDownloadIsFile by remember { mutableStateOf(false) }
     var pendingDownloadSelectedPaths by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -76,6 +78,17 @@ fun MainAppScreen(
     val isCalculatingDiff by viewModel.isCalculatingDiff.collectAsStateWithLifecycle()
     val preflightReport by viewModel.preflightReport.collectAsStateWithLifecycle()
     val deviceFlowState by viewModel.deviceFlowState.collectAsStateWithLifecycle()
+
+    // Global and Tab Back Handling
+    if (showAuthDialog) {
+        BackHandler { showAuthDialog = false }
+    } else if (showRepoSelectorDialog) {
+        BackHandler { showRepoSelectorDialog = false }
+    } else {
+        BackHandler(enabled = currentTab != NavigationTab.HOME) {
+            currentTab = NavigationTab.HOME
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -201,6 +214,7 @@ fun MainAppScreen(
                 NavigationTab.UPLOAD -> {
                     UploadScreen(
                         selectedRepo = selectedRepo,
+                        initialDestinationPath = pendingUploadDestinationPath,
                         onScanFolder = { uri -> viewModel.scanFolder(uri) },
                         onScanFiles = { uris -> viewModel.scanFiles(uris) },
                         scannedFiles = scannedFiles,
@@ -209,6 +223,7 @@ fun MainAppScreen(
                         ignoreRules = ignoreRules,
                         onUpdateIgnoreRules = { rules -> viewModel.updateIgnoreRules(rules) },
                         onStartUpload = { destinationDir, commitMsg, isWipe, wipeMode ->
+                            pendingUploadDestinationPath = null
                             viewModel.startUpload(destinationDir, commitMsg, isWipe, wipeMode) {
                                 currentTab = NavigationTab.TRANSFERS
                             }
@@ -217,7 +232,8 @@ fun MainAppScreen(
                         diffReport = diffReport,
                         isCalculatingDiff = isCalculatingDiff,
                         preflightReport = preflightReport,
-                        onRunPreflight = { dest, isWipe, wipeMode -> viewModel.runPreflightAndDiff(dest, isWipe, wipeMode) }
+                        onRunPreflight = { dest, isWipe, wipeMode -> viewModel.runPreflightAndDiff(dest, isWipe, wipeMode) },
+                        onFetchDirectory = { owner, repo, path, branch -> viewModel.fetchDirectoryContents(owner, repo, path, branch) }
                     )
                 }
 
@@ -235,7 +251,8 @@ fun MainAppScreen(
                             viewModel.startDownload(remotePath, config) {
                                 currentTab = NavigationTab.TRANSFERS
                             }
-                        }
+                        },
+                        onFetchDirectory = { owner, repo, path, branch -> viewModel.fetchDirectoryContents(owner, repo, path, branch) }
                     )
                 }
 
@@ -271,6 +288,10 @@ fun MainAppScreen(
                             pendingDownloadIsFile = false
                             pendingDownloadSelectedPaths = paths
                             currentTab = NavigationTab.DOWNLOAD
+                        },
+                        onUploadToFolder = { folderPath ->
+                            pendingUploadDestinationPath = folderPath
+                            currentTab = NavigationTab.UPLOAD
                         },
                         onOpenRepoSelector = { showRepoSelectorDialog = true }
                     )

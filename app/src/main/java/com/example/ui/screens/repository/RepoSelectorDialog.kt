@@ -1,5 +1,6 @@
 package com.example.ui.screens.repository
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -46,6 +47,14 @@ fun RepoSelectorDialog(
     var branches by remember { mutableStateOf<List<GitHubBranchDto>>(emptyList()) }
     var isLoadingBranches by remember { mutableStateOf(false) }
     var showCreateDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = showCreateDialog) {
+        showCreateDialog = false
+    }
+
+    BackHandler(enabled = selectedRepoForBranch != null && !showCreateDialog) {
+        selectedRepoForBranch = null
+    }
 
     val filteredRepos = remember(repos, searchQuery) {
         if (searchQuery.isBlank()) repos
@@ -116,7 +125,10 @@ fun RepoSelectorDialog(
                                 Icon(imageVector = Icons.Default.Add, contentDescription = "New Repo")
                             }
                         }
-                        IconButton(onClick = onDismiss) {
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.testTag("repo_selector_close_button")
+                        ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
                     }
@@ -161,7 +173,8 @@ fun RepoSelectorDialog(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
+                                .weight(1f)
+                                .testTag("repo_list_empty_view"),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -408,6 +421,7 @@ fun CreateRepoDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("create_repo_dialog"),
         title = { Text("Create GitHub Repository") },
         text = {
             Column {
@@ -471,7 +485,12 @@ fun CreateRepoDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("cancel_create_repo_button")
+            ) {
+                Text("Cancel")
+            }
         }
     )
 }

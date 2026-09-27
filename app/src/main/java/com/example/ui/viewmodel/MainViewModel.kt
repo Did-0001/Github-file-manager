@@ -239,6 +239,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun fetchDirectoryContents(
+        owner: String,
+        repo: String,
+        path: String,
+        branch: String
+    ): Result<List<GitHubContentDto>> {
+        return gitHubRepository.getDirectoryContents(owner, repo, path, branch)
+    }
+
     fun createFile(fileName: String, content: String, commitMsg: String, callback: (Boolean, String?) -> Unit) {
         val repo = _selectedRepo.value ?: return
         val currentDir = _currentBrowsePath.value.trim('/')

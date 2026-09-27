@@ -504,13 +504,12 @@ class TransferEngine(
             )
         }
 
-        onCreated(transferId)
-
+        // Persist records first, enqueue WorkManager, and only call onCreated when durable
         engineScope.launch {
-            transferRepository.insertTransfer(entity)
-            transferRepository.insertItems(itemEntities)
-
             try {
+                transferRepository.insertTransfer(entity)
+                transferRepository.insertItems(itemEntities)
+
                 val request = OneTimeWorkRequestBuilder<TransferWorker>()
                     .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
                     .addTag("transfer_$transferId")
@@ -520,7 +519,24 @@ class TransferEngine(
                     ExistingWorkPolicy.KEEP,
                     request
                 )
-            } catch (_: Exception) {}
+
+                withContext(Dispatchers.Main) {
+                    onCreated(transferId)
+                }
+            } catch (e: Exception) {
+                // Preserve failure in a recoverable/visible state if entity was already inserted
+                try {
+                    val persisted = transferRepository.getTransfer(transferId)
+                    if (persisted != null) {
+                        transferRepository.updateTransfer(
+                            persisted.copy(
+                                status = TransferStatus.FAILED.name,
+                                errorMessage = "Failed to queue transfer worker: ${e.message ?: e.javaClass.simpleName}"
+                            )
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
         }
         return transferId
     }
@@ -1015,11 +1031,11 @@ class TransferEngine(
             downloadScope = config.downloadScope.name
         )
 
-        onCreated(transferId)
-
+        // Persist record first, enqueue WorkManager, and only call onCreated when durable
         engineScope.launch {
-            transferRepository.insertTransfer(entity)
             try {
+                transferRepository.insertTransfer(entity)
+
                 val request = OneTimeWorkRequestBuilder<TransferWorker>()
                     .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
                     .addTag("transfer_$transferId")
@@ -1029,7 +1045,24 @@ class TransferEngine(
                     ExistingWorkPolicy.KEEP,
                     request
                 )
-            } catch (_: Exception) {}
+
+                withContext(Dispatchers.Main) {
+                    onCreated(transferId)
+                }
+            } catch (e: Exception) {
+                // Preserve failure in a recoverable/visible state if entity was already inserted
+                try {
+                    val persisted = transferRepository.getTransfer(transferId)
+                    if (persisted != null) {
+                        transferRepository.updateTransfer(
+                            persisted.copy(
+                                status = TransferStatus.FAILED.name,
+                                errorMessage = "Failed to queue transfer worker: ${e.message ?: e.javaClass.simpleName}"
+                            )
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
         }
         return transferId
     }

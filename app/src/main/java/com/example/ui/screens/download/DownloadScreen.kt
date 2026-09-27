@@ -1,6 +1,7 @@
 package com.example.ui.screens.download
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -20,8 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.SelectedRepoInfo
+import com.example.data.remote.dto.GitHubContentDto
 import com.example.domain.model.DownloadConfig
 import com.example.domain.model.OverwritePolicy
+import com.example.ui.components.GitHubPathPickerDialog
+import com.example.ui.components.GitHubPickerMode
 import com.example.ui.theme.GhDarkAccentBlue
 import com.example.ui.theme.GhDarkAccentGreen
 import com.example.ui.theme.GhDarkAccentPurple
@@ -35,6 +39,7 @@ fun DownloadScreen(
     initialSelectedPaths: List<String> = emptyList(),
     onOpenRepoSelector: () -> Unit,
     onStartDownload: (remotePath: String, config: DownloadConfig) -> Unit,
+    onFetchDirectory: (suspend (owner: String, repo: String, path: String, branch: String) -> Result<List<GitHubContentDto>>)? = null,
     modifier: Modifier = Modifier
 ) {
     var downloadScopeIndex by remember(initialPath, initialIsFile, initialSelectedPaths) {
@@ -53,6 +58,11 @@ fun DownloadScreen(
     var createRepoFolder by remember { mutableStateOf(false) }
     var preserveStructure by remember { mutableStateOf(true) }
     var selectedPolicy by remember { mutableStateOf(OverwritePolicy.OVERWRITE) }
+    var showPathPickerDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = showPathPickerDialog) {
+        showPathPickerDialog = false
+    }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val destPickerLauncher = rememberLauncherForActivityResult(
@@ -73,7 +83,8 @@ fun DownloadScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag("download_lazy_column"),
         contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -99,7 +110,7 @@ fun DownloadScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("card_download_repo")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -153,7 +164,7 @@ fun DownloadScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("card_download_scope")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -171,23 +182,27 @@ fun DownloadScreen(
                         Tab(
                             selected = downloadScopeIndex == 0,
                             onClick = { downloadScopeIndex = 0 },
-                            text = { Text("Entire Repo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                            text = { Text("Entire Repo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.testTag("scope_tab_entire_repo")
                         )
                         Tab(
                             selected = downloadScopeIndex == 1,
                             onClick = { downloadScopeIndex = 1 },
-                            text = { Text("Folder", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                            text = { Text("Folder", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.testTag("scope_tab_folder")
                         )
                         Tab(
                             selected = downloadScopeIndex == 2,
                             onClick = { downloadScopeIndex = 2 },
-                            text = { Text("Single File", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                            text = { Text("Single File", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.testTag("scope_tab_single_file")
                         )
                         if (selectedPathsList.isNotEmpty()) {
                             Tab(
                                 selected = downloadScopeIndex == 3,
                                 onClick = { downloadScopeIndex = 3 },
-                                text = { Text("Selected (${selectedPathsList.size})", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                                text = { Text("Selected (${selectedPathsList.size})", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                                modifier = Modifier.testTag("scope_tab_selected")
                             )
                         }
                     }
@@ -225,13 +240,39 @@ fun DownloadScreen(
                         }
                     } else if (downloadScopeIndex != 0) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = remotePathInput,
-                            onValueChange = { remotePathInput = it },
-                            label = { Text(if (downloadScopeIndex == 1) "Remote Folder Path (e.g. app/src)" else "Remote File Path (e.g. README.md)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("download_remote_path_input")
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = remotePathInput,
+                                onValueChange = { remotePathInput = it },
+                                label = { Text(if (downloadScopeIndex == 1) "Remote Folder Path (e.g. app/src)" else "Remote File Path (e.g. README.md)") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("download_remote_path_input")
+                            )
+
+                            if (onFetchDirectory != null) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                FilledTonalButton(
+                                    onClick = { showPathPickerDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .height(56.dp)
+                                        .testTag("download_browse_path_button")
+                                ) {
+                                    Icon(
+                                        imageVector = if (downloadScopeIndex == 1) Icons.Default.FolderOpen else Icons.Default.InsertDriveFile,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Browse", fontSize = 12.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -243,7 +284,7 @@ fun DownloadScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("card_download_destination")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -288,7 +329,7 @@ fun DownloadScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("card_download_options")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -362,19 +403,22 @@ fun DownloadScreen(
                         ) {
                             RadioButton(
                                 selected = selectedPolicy == OverwritePolicy.OVERWRITE,
-                                onClick = { selectedPolicy = OverwritePolicy.OVERWRITE }
+                                onClick = { selectedPolicy = OverwritePolicy.OVERWRITE },
+                                modifier = Modifier.testTag("overwrite_policy_overwrite")
                             )
                             Text("Overwrite", fontSize = 12.sp)
                             Spacer(modifier = Modifier.width(8.dp))
                             RadioButton(
                                 selected = selectedPolicy == OverwritePolicy.SKIP,
-                                onClick = { selectedPolicy = OverwritePolicy.SKIP }
+                                onClick = { selectedPolicy = OverwritePolicy.SKIP },
+                                modifier = Modifier.testTag("overwrite_policy_skip")
                             )
                             Text("Skip existing", fontSize = 12.sp)
                             Spacer(modifier = Modifier.width(8.dp))
                             RadioButton(
                                 selected = selectedPolicy == OverwritePolicy.KEEP_BOTH,
-                                onClick = { selectedPolicy = OverwritePolicy.KEEP_BOTH }
+                                onClick = { selectedPolicy = OverwritePolicy.KEEP_BOTH },
+                                modifier = Modifier.testTag("overwrite_policy_keep_both")
                             )
                             Text("Keep both", fontSize = 12.sp)
                         }
@@ -428,5 +472,26 @@ fun DownloadScreen(
                 }
             }
         }
+    }
+
+    // GitHub Path Picker Dialog
+    if (showPathPickerDialog && onFetchDirectory != null) {
+        val pickerMode = if (downloadScopeIndex == 1) {
+            GitHubPickerMode.DIRECTORIES_ONLY
+        } else {
+            GitHubPickerMode.FILES_ONLY
+        }
+
+        GitHubPathPickerDialog(
+            selectedRepo = selectedRepo,
+            initialPath = remotePathInput,
+            pickerMode = pickerMode,
+            onFetchDirectory = onFetchDirectory,
+            onDismiss = { showPathPickerDialog = false },
+            onPathConfirmed = { chosenPath ->
+                remotePathInput = chosenPath
+                showPathPickerDialog = false
+            }
+        )
     }
 }

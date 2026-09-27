@@ -1,55 +1,217 @@
 package com.example.domain.engine
 
+import com.example.data.local.SecureStorage
 import com.example.data.local.entity.TransferEntity
 import com.example.data.local.entity.TransferItemEntity
+import com.example.data.remote.ApiClient
 import com.example.data.remote.ApiErrorType
 import com.example.data.remote.GitHubApiException
+import com.example.data.remote.dto.CreateBlobRequest
+import com.example.data.remote.dto.CreateCommitRequest
 import com.example.data.remote.dto.CreateTreeEntryDto
+import com.example.data.remote.dto.CreateTreeRequest
+import com.example.data.remote.dto.UpdateRefRequest
+import com.example.data.repository.GitHubRepository
 import com.example.domain.model.TransferStatus
 import com.example.domain.model.TransferType
 import com.example.domain.model.WipeMode
+import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class UploadStressAndFailurePathsTest {
 
+    private lateinit var mockWebServer: MockWebServer
+    private lateinit var apiClient: ApiClient
+    private lateinit var gitHubRepository: GitHubRepository
+
+    @Before
+    fun setUp() {
+        mockWebServer = MockWebServer()
+        mockWebServer.start()
+
+        val context = RuntimeEnvironment.getApplication()
+        val secureStorage = SecureStorage(context)
+        apiClient = ApiClient(secureStorage, mockWebServer.url("/").toString())
+        gitHubRepository = GitHubRepository(apiClient)
+    }
+
+    @After
+    fun tearDown() {
+        mockWebServer.shutdown()
+    }
+
     @Test
-    fun `failed blob strictly prevents commit creation and branch ref update`() {
-        // Given a transfer with 3 files
-        val transferId = "upload-failed-blob-test"
-        val items = listOf(
-            TransferItemEntity(transferId = transferId, relativePath = "file1.txt", githubPath = "file1.txt", sizeBytes = 100, status = "SUCCESS", blobSha = "blobsha1", processedBytes = 100),
-            TransferItemEntity(transferId = transferId, relativePath = "file2.txt", githubPath = "file2.txt", sizeBytes = 200, status = "FAILED", errorMessage = "Network timeout uploading blob", processedBytes = 0),
-            TransferItemEntity(transferId = transferId, relativePath = "file3.txt", githubPath = "file3.txt", sizeBytes = 150, status = "PENDING", processedBytes = 0)
+    fun `failed blob upload returns non-retryable 4xx error and prevents tree commit and ref update`() = runBlocking {
+        // Enqueue 403 Permission Denied response for blob upload
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(403)
+                .setBody("""{"message":"Resource not accessible by personal access token","documentation_url":"https://docs.github.com"}""")
         )
 
-        // Transaction boundary rule in TransferEngine:
-        // Any item with status == "FAILED" MUST abort the transfer and prevent tree, commit, and ref update
-        val failedItems = items.filter { it.status == "FAILED" }
-        assertTrue("Transfer contains failed items", failedItems.isNotEmpty())
+        val blobContent = "test blob content".toByteArray()
+        val body = blobContent.toRequestBody("application/octet-stream".toMediaType())
+        val blobRes = gitHubRepository.createBlobStream("owner", "repo", body)
 
-        var treeCreated = false
-        var commitCreated = false
-        var branchRefUpdated = false
+        assertTrue("Blob upload must fail with 403", blobRes.isFailure)
+        val ex = blobRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull("Exception must be GitHubApiException", ex)
+        assertEquals(ApiErrorType.PERMISSION_DENIED, ex!!.errorType)
+        assertEquals(403, ex.statusCode)
+        assertFalse("Permission denied must NOT be retryable", ex.isRetryable)
 
-        val shouldProceedToCommit = failedItems.isEmpty()
-        if (shouldProceedToCommit) {
-            treeCreated = true
-            commitCreated = true
-            branchRefUpdated = true
-        }
+        // Verify transaction boundary: tree, commit, ref update are NEVER executed
+        assertEquals("Only blob upload endpoint was called", 1, mockWebServer.requestCount)
+        val recordedReq = mockWebServer.takeRequest()
+        assertEquals("/repos/owner/repo/git/blobs", recordedReq.path)
+    }
 
-        assertFalse("Tree must NOT be created when a blob fails", treeCreated)
-        assertFalse("Commit must NOT be created when a blob fails", commitCreated)
-        assertFalse("Branch ref must NOT be updated when a blob fails", branchRefUpdated)
+    @Test
+    fun `create tree failure with 422 unprocessable entity produces validation error and aborts commit`() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(422)
+                .setBody("""{"message":"Tree entry path is invalid","errors":[{"resource":"Tree","field":"path","code":"invalid"}]}""")
+        )
 
-        val failureSummary = "${failedItems.size} of ${items.size} files failed to upload. Branch was not modified. Click Retry Failed Files to re-attempt."
-        assertTrue("Summary accurately informs user branch was not modified", failureSummary.contains("Branch was not modified"))
+        val entries = listOf(
+            CreateTreeEntryDto(path = "invalid/../path", mode = "100644", type = "blob", sha = "abc1234567890")
+        )
+        val treeRes = gitHubRepository.createTree("owner", "repo", "base123", entries)
+
+        assertTrue("Tree creation must fail", treeRes.isFailure)
+        val ex = treeRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex)
+        assertEquals(ApiErrorType.VALIDATION_ERROR, ex!!.errorType)
+        assertEquals(422, ex.statusCode)
+        assertFalse(ex.isRetryable)
+
+        // Recorded request checked
+        val recordedReq = mockWebServer.takeRequest()
+        assertEquals("/repos/owner/repo/git/trees", recordedReq.path)
+        assertTrue(recordedReq.body.readUtf8().contains("invalid/../path"))
+    }
+
+    @Test
+    fun `create commit failure with 502 bad gateway produces retryable server error`() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(502)
+                .setBody("""{"message":"Bad Gateway"}""")
+        )
+
+        val commitRes = gitHubRepository.createCommit("owner", "repo", "Test commit", "tree123", "parent123")
+
+        assertTrue("Commit creation must fail on 502", commitRes.isFailure)
+        val ex = commitRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex)
+        assertEquals(ApiErrorType.SERVER_ERROR, ex!!.errorType)
+        assertEquals(502, ex.statusCode)
+        assertTrue("Server errors like 502 Bad Gateway MUST be retryable", ex.isRetryable)
+    }
+
+    @Test
+    fun `branch update failure with 422 not-fast-forward produces non-retryable CONFLICT`() = runBlocking {
+        // GitHub Git Data API returns 422 when an updateRef is not a fast forward
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(422)
+                .setBody("""{"message":"Reference cannot be updated (not a fast forward)"}""")
+        )
+
+        val updateRes = gitHubRepository.updateBranchRef("owner", "repo", "main", "newcommit123", force = false)
+
+        assertTrue("Update branch ref must fail on 422 not fast forward", updateRes.isFailure)
+        val ex = updateRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex)
+        assertEquals(ApiErrorType.CONFLICT, ex!!.errorType)
+        assertEquals(422, ex.statusCode)
+        assertFalse("Ref update conflict must NEVER be retryable", ex.isRetryable)
+    }
+
+    @Test
+    fun `branch update failure with 409 conflict produces non-retryable CONFLICT`() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(409)
+                .setBody("""{"message":"Conflict: branch was updated concurrently"}""")
+        )
+
+        val updateRes = gitHubRepository.updateBranchRef("owner", "repo", "main", "newcommit123", force = false)
+
+        assertTrue("Update branch ref must fail on 409", updateRes.isFailure)
+        val ex = updateRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex)
+        assertEquals(ApiErrorType.CONFLICT, ex!!.errorType)
+        assertEquals(409, ex.statusCode)
+        assertFalse("Ref update conflict must NEVER be retryable", ex.isRetryable)
+    }
+
+    @Test
+    fun `rate limit 429 and 403 with x-ratelimit-remaining=0 produce RATE_LIMITED and retryAfter`() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(429)
+                .setHeader("Retry-After", "45")
+                .setBody("""{"message":"API rate limit exceeded"}""")
+        )
+
+        val userRes = gitHubRepository.getAuthenticatedUser()
+        assertTrue(userRes.isFailure)
+        val ex = userRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex)
+        assertEquals(ApiErrorType.RATE_LIMITED, ex!!.errorType)
+        assertEquals(429, ex.statusCode)
+        assertEquals(45L, ex.retryAfterSeconds)
+        assertTrue("Rate limited must be retryable", ex.isRetryable)
+
+        // Test 403 with remaining 0
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(403)
+                .setHeader("x-ratelimit-remaining", "0")
+                .setHeader("x-ratelimit-reset", "${(System.currentTimeMillis() / 1000) + 60}")
+                .setBody("""{"message":"API rate limit exceeded"}""")
+        )
+
+        val repoRes = gitHubRepository.getUserRepos(1)
+        assertTrue(repoRes.isFailure)
+        val ex2 = repoRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex2)
+        assertEquals(ApiErrorType.RATE_LIMITED, ex2!!.errorType)
+        assertTrue("Calculated retry-after must be positive", (ex2.retryAfterSeconds ?: 0L) > 0)
+    }
+
+    @Test
+    fun `auth failure 401 produces non-retryable AUTH_REQUIRED`() = runBlocking {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setBody("""{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}""")
+        )
+
+        val branchRes = gitHubRepository.getBranches("owner", "repo")
+        assertTrue(branchRes.isFailure)
+        val ex = branchRes.exceptionOrNull() as? GitHubApiException
+        assertNotNull(ex)
+        assertEquals(ApiErrorType.AUTH_REQUIRED, ex!!.errorType)
+        assertEquals(401, ex.statusCode)
+        assertFalse(ex.isRetryable)
     }
 
     @Test

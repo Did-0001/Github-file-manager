@@ -1,6 +1,7 @@
 package com.example.ui.screens.upload
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -10,8 +11,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,13 +29,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.SelectedRepoInfo
+import com.example.data.remote.dto.GitHubContentDto
 import com.example.domain.model.*
+import com.example.ui.components.GitHubPathPickerDialog
+import com.example.ui.components.GitHubPickerMode
 import com.example.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UploadScreen(
     selectedRepo: SelectedRepoInfo?,
+    initialDestinationPath: String? = null,
     onScanFolder: (Uri) -> Unit,
     onScanFiles: (List<Uri>) -> Unit,
     scannedFiles: List<FileScanItem>,
@@ -46,9 +53,10 @@ fun UploadScreen(
     isCalculatingDiff: Boolean,
     preflightReport: PreflightReport?,
     onRunPreflight: (destinationDir: String, isWipe: Boolean, wipeMode: WipeMode) -> Unit,
+    onFetchDirectory: (suspend (owner: String, repo: String, path: String, branch: String) -> Result<List<GitHubContentDto>>)? = null,
     modifier: Modifier = Modifier
 ) {
-    var destinationPath by remember { mutableStateOf("") }
+    var destinationPath by remember(initialDestinationPath) { mutableStateOf(initialDestinationPath ?: "") }
     var commitMessage by remember { mutableStateOf("Upload files via GitHub File Manager") }
     var wipeMode by remember { mutableStateOf(WipeMode.NONE) }
     var pendingWipeMode by remember { mutableStateOf<WipeMode?>(null) }
@@ -57,6 +65,25 @@ fun UploadScreen(
     var showDiffDetailsSheet by remember { mutableStateOf(false) }
     var showPreflightDetailsSheet by remember { mutableStateOf(false) }
     var showLocalFilesList by remember { mutableStateOf(false) }
+    var showPathPickerDialog by remember { mutableStateOf(false) }
+
+    val hasActiveDialog = showPathPickerDialog || showDiffDetailsSheet ||
+            showPreflightDetailsSheet || showIgnoreRulesDialog ||
+            showWipeConfirmDialog || showLocalFilesList
+
+    BackHandler(enabled = hasActiveDialog) {
+        when {
+            showPathPickerDialog -> showPathPickerDialog = false
+            showDiffDetailsSheet -> showDiffDetailsSheet = false
+            showPreflightDetailsSheet -> showPreflightDetailsSheet = false
+            showIgnoreRulesDialog -> showIgnoreRulesDialog = false
+            showWipeConfirmDialog -> {
+                showWipeConfirmDialog = false
+                pendingWipeMode = null
+            }
+            showLocalFilesList -> showLocalFilesList = false
+        }
+    }
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -103,7 +130,8 @@ fun UploadScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag("upload_lazy_column"),
         contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -311,15 +339,37 @@ fun UploadScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    OutlinedTextField(
-                        value = destinationPath,
-                        onValueChange = { destinationPath = it },
-                        label = { Text("Destination Directory in Repository") },
-                        placeholder = { Text("e.g. / or src/main or docs") },
-                        leadingIcon = { Icon(imageVector = Icons.Default.Folder, contentDescription = null) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("destination_path_input")
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = destinationPath,
+                            onValueChange = { destinationPath = it },
+                            label = { Text("Destination Directory in Repository") },
+                            placeholder = { Text("e.g. / or src/main or docs") },
+                            leadingIcon = { Icon(imageVector = Icons.Default.Folder, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("destination_path_input")
+                        )
+
+                        if (onFetchDirectory != null) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FilledTonalButton(
+                                onClick = { showPathPickerDialog = true },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .height(56.dp)
+                                    .testTag("upload_browse_path_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Browse", fontSize = 12.sp)
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(6.dp))
 
@@ -644,6 +694,21 @@ fun UploadScreen(
             onDismiss = { showDiffDetailsSheet = false }
         )
     }
+
+    // GitHub Path Picker Dialog
+    if (showPathPickerDialog && onFetchDirectory != null) {
+        GitHubPathPickerDialog(
+            selectedRepo = selectedRepo,
+            initialPath = destinationPath,
+            pickerMode = GitHubPickerMode.DIRECTORIES_ONLY,
+            onFetchDirectory = onFetchDirectory,
+            onDismiss = { showPathPickerDialog = false },
+            onPathConfirmed = { chosenPath ->
+                destinationPath = chosenPath
+                showPathPickerDialog = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -771,7 +836,7 @@ fun IgnoreRulesDialog(
         onDismissRequest = onDismiss,
         title = { Text("Ignore Rules (.gitignore)") },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 IgnoreToggleRow("Ignore .git folder", ignoreGit) { ignoreGit = it }
                 IgnoreToggleRow("Ignore build / .gradle / APKs", ignoreBuild) { ignoreBuild = it }
                 IgnoreToggleRow("Ignore node_modules folder", ignoreNodeModules) { ignoreNodeModules = it }

@@ -1,5 +1,6 @@
 package com.example.ui.screens.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -33,10 +34,15 @@ fun SettingsScreen(
 ) {
     var showSignOutConfirm by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = showSignOutConfirm) {
+        showSignOutConfirm = false
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag("settings_lazy_column"),
         contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -60,7 +66,7 @@ fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("settings_account_card")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -140,7 +146,7 @@ fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("settings_repo_card")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -192,7 +198,7 @@ fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("settings_security_card")
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -228,7 +234,7 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("settings_rate_limit_card")
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,6 +284,7 @@ fun SettingsScreen(
     if (showSignOutConfirm) {
         AlertDialog(
             onDismissRequest = { showSignOutConfirm = false },
+            modifier = Modifier.testTag("sign_out_confirm_dialog"),
             title = { Text("Sign Out of GitHub?") },
             text = {
                 Text("This will purge the encrypted token from Android KeyStore and clear local cached repository metadata.")
@@ -295,7 +302,12 @@ fun SettingsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showSignOutConfirm = false }) { Text("Cancel") }
+                TextButton(
+                    onClick = { showSignOutConfirm = false },
+                    modifier = Modifier.testTag("cancel_sign_out_button")
+                ) {
+                    Text("Cancel")
+                }
             }
         )
     }

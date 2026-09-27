@@ -2,6 +2,7 @@ package com.example.ui.screens.repository
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,11 +54,13 @@ fun RepoBrowserScreen(
     onDownloadFile: (GitHubContentDto) -> Unit,
     onDownloadCurrentFolder: (String) -> Unit,
     onDownloadSelected: (List<String>) -> Unit = {},
+    onUploadToFolder: ((String) -> Unit)? = null,
     onOpenRepoSelector: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedFileForDetail by remember { mutableStateOf<GitHubContentDto?>(null) }
+    var selectedFolderForDetail by remember { mutableStateOf<GitHubContentDto?>(null) }
     var viewingFile by remember { mutableStateOf<GitHubContentDto?>(null) }
     var editingFile by remember { mutableStateOf<GitHubContentDto?>(null) }
     var showCreateFileDialog by remember { mutableStateOf(false) }
@@ -75,6 +78,32 @@ fun RepoBrowserScreen(
     val filteredContents = remember(contents, searchQuery) {
         if (searchQuery.isBlank()) contents
         else contents.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    }
+
+    val hasActiveDialog = viewingFile != null || editingFile != null ||
+            selectedFileForDetail != null || selectedFolderForDetail != null ||
+            showCreateFileDialog || showCreateDirDialog ||
+            showDeleteConfirmDialog || showBatchDeleteDialog
+
+    BackHandler(enabled = isSelectionMode || hasActiveDialog || currentPath.isNotEmpty()) {
+        when {
+            isSelectionMode -> {
+                isSelectionMode = false
+                selectedPaths.clear()
+            }
+            viewingFile != null -> viewingFile = null
+            editingFile != null -> editingFile = null
+            selectedFileForDetail != null -> selectedFileForDetail = null
+            selectedFolderForDetail != null -> selectedFolderForDetail = null
+            showCreateFileDialog -> showCreateFileDialog = false
+            showCreateDirDialog -> showCreateDirDialog = false
+            showDeleteConfirmDialog -> showDeleteConfirmDialog = false
+            showBatchDeleteDialog -> showBatchDeleteDialog = false
+            currentPath.isNotEmpty() -> {
+                val parentPath = if (currentPath.contains("/")) currentPath.substringBeforeLast("/") else ""
+                onNavigatePath(parentPath)
+            }
+        }
     }
 
     Scaffold(
@@ -124,6 +153,27 @@ fun RepoBrowserScreen(
                                 }
 
                                 if (selectedPaths.isNotEmpty()) {
+                                    if (selectedPaths.size == 1 && onUploadToFolder != null) {
+                                        val singleItem = filteredContents.find { it.path == selectedPaths.first() }
+                                        if (singleItem?.isDirectory == true) {
+                                            IconButton(
+                                                onClick = {
+                                                    isSelectionMode = false
+                                                    val path = selectedPaths.first()
+                                                    selectedPaths.clear()
+                                                    onUploadToFolder(path)
+                                                },
+                                                modifier = Modifier.testTag("batch_upload_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CloudUpload,
+                                                    contentDescription = "Upload into Folder",
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
+
                                     IconButton(
                                         onClick = {
                                             if (selectedPaths.size == 1) {
@@ -208,6 +258,14 @@ fun RepoBrowserScreen(
                                     modifier = Modifier.testTag("browser_select_mode_button")
                                 ) {
                                     Icon(imageVector = Icons.Default.Checklist, contentDescription = "Select")
+                                }
+                                if (onUploadToFolder != null) {
+                                    IconButton(
+                                        onClick = { onUploadToFolder(currentPath) },
+                                        modifier = Modifier.testTag("browser_upload_button")
+                                    ) {
+                                        Icon(imageVector = Icons.Default.CloudUpload, contentDescription = "Upload Here")
+                                    }
                                 }
                                 IconButton(
                                     onClick = { showCreateFileDialog = true },
@@ -435,15 +493,21 @@ fun RepoBrowserScreen(
 
                                 if (!isSelectionMode) {
                                     if (item.isDirectory) {
-                                        Icon(
-                                            imageVector = Icons.Default.ChevronRight,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        IconButton(
+                                            onClick = { selectedFolderForDetail = item },
+                                            modifier = Modifier.size(32.dp).testTag("browser_folder_options_${item.name}")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MoreVert,
+                                                contentDescription = "Folder Options",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     } else {
                                         IconButton(
                                             onClick = { selectedFileForDetail = item },
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(32.dp).testTag("browser_file_options_${item.name}")
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.MoreVert,
@@ -562,6 +626,101 @@ fun RepoBrowserScreen(
             },
             confirmButton = {
                 TextButton(onClick = { selectedFileForDetail = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // Folder Detail Modal Dialog
+    if (selectedFolderForDetail != null) {
+        val folder = selectedFolderForDetail!!
+        AlertDialog(
+            onDismissRequest = { selectedFolderForDetail = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Folder, contentDescription = null, tint = GhDarkAccentBlue)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            },
+            text = {
+                Column {
+                    DetailRow("Path", folder.path)
+                    DetailRow("Type", "Directory")
+                    DetailRow("Repository", selectedRepo?.fullName ?: "N/A")
+                    DetailRow("Branch", selectedRepo?.branch ?: "N/A")
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val path = folder.path
+                                selectedFolderForDetail = null
+                                onNavigatePath(path)
+                            },
+                            modifier = Modifier.weight(1f).testTag("dialog_open_folder_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Open")
+                        }
+
+                        Button(
+                            onClick = {
+                                val path = folder.path
+                                selectedFolderForDetail = null
+                                onDownloadCurrentFolder(path)
+                            },
+                            modifier = Modifier.weight(1f).testTag("dialog_download_folder_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Download")
+                        }
+                    }
+
+                    if (onUploadToFolder != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                val path = folder.path
+                                selectedFolderForDetail = null
+                                onUploadToFolder(path)
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("dialog_upload_folder_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Upload into Folder")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            val path = folder.path
+                            selectedFolderForDetail = null
+                            onDeleteFilesBatch(listOf(path), "Delete directory $path") { success, _ ->
+                                if (success) onRefresh()
+                            }
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = GhDarkAccentRed),
+                        modifier = Modifier.fillMaxWidth().testTag("dialog_delete_folder_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Delete Directory")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedFolderForDetail = null }) {
                     Text("Close")
                 }
             }

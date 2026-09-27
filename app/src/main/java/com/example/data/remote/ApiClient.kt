@@ -9,7 +9,10 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.concurrent.TimeUnit
 
-class ApiClient(private val secureStorage: SecureStorage) {
+class ApiClient(
+    private val secureStorage: SecureStorage,
+    private val customBaseUrl: String? = null
+) {
 
     val moshi: Moshi = Moshi.Builder()
         .add(com.example.data.remote.dto.CreateTreeEntryDto::class.java, com.example.data.remote.dto.CreateTreeEntryJsonAdapter())
@@ -43,7 +46,7 @@ class ApiClient(private val secureStorage: SecureStorage) {
 
     val gitHubApi: GitHubApi by lazy {
         Retrofit.Builder()
-            .baseUrl("https://api.github.com/")
+            .baseUrl(customBaseUrl ?: "https://api.github.com/")
             .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
