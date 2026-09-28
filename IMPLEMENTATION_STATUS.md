@@ -1,15 +1,29 @@
 # Current Checkpoint
 
 State: VERIFIED
-Phase: Phase 14 - RepoSelectorDialog Back Navigation, Semantics, and Comprehensive UI Testing
-Action: Author comprehensive Robolectric UI test suite in RepoSelectorDialogTest.kt
-Intent: Create RepoSelectorDialogTest under Robolectric exercising empty repo state, repository list display & search filtering, branch list loading, default branch selection, custom branch selection, back-to-repos navigation, refresh button callback, and create repository dialog workflow.
-Files: /app/src/test/java/com/example/ui/screens/repository/RepoSelectorDialogTest.kt
-Last observed result: gradle :app:testDebugUnitTest --tests "com.example.ui.screens.repository.RepoSelectorDialogTest" passed (BUILD SUCCESSFUL in 42s, 8/8 tests passed).
+Phase: Phase 15 - AuthDialog Back Handling, Test Semantics, and Comprehensive UI Testing
+Action: Author comprehensive Robolectric UI test suite in AuthDialogTest.kt
+Intent: Create AuthDialogTest under Robolectric exercising PAT tab display, token input, visibility toggle, verify button gating, successful verification message, error verification message, tab switching to Device Flow, client id input, start device flow callback, user code display with copy/open buttons, and device flow cancellation.
+Files: /app/src/test/java/com/example/ui/screens/auth/AuthDialogTest.kt
+Last observed result: gradle :app:testDebugUnitTest --tests "com.example.ui.screens.auth.AuthDialogTest" passed (BUILD SUCCESSFUL in 35s, 8/8 tests passed).
 Verification: compile_applet succeeded cleanly and all 8 Robolectric UI tests passed.
-Next action: Phase 14 complete. Ready for next phase.
+Next action: Phase 15 complete. Ready for next phase.
 
 # Action History
+
+- Date/Time: 2026-09-28T00:33:20-07:00
+  Phase: Phase 15 - AuthDialog Back Handling, Test Semantics, and Comprehensive UI Testing
+  Action: Author comprehensive Robolectric UI test suite in AuthDialogTest.kt
+  Files: /app/src/test/java/com/example/ui/screens/auth/AuthDialogTest.kt
+  Result: Authored 8 Robolectric UI tests in AuthDialogTest verifying: (1) PAT tab initial state with token input and disabled verify button; (2) entering token enables verify button and password visibility can be toggled; (3) successful verification displays success badge and username; (4) failed verification displays error message; (5) close icon button invokes onDismiss; (6) switching to Device Flow tab displays OAuth client ID input and start button; (7) starting device flow displays user code card with copy code button, open GitHub browser button, and live polling status indicator; (8) cancel flow button resets state and invokes onCancelDeviceFlow callback.
+  Verification: compile_applet succeeded and gradle :app:testDebugUnitTest --tests "com.example.ui.screens.auth.AuthDialogTest" passed cleanly (BUILD SUCCESSFUL in 35s, 8/8 tests passed).
+
+- Date/Time: 2026-09-28T00:30:20-07:00
+  Phase: Phase 15 - AuthDialog Back Handling, Test Semantics, and Comprehensive UI Testing
+  Action: Add BackHandler and semantic test tags to AuthDialog.kt
+  Files: /app/src/main/java/com/example/ui/screens/auth/AuthDialog.kt
+  Result: Added BackHandler support to cancel device authorization flow on system back press. Added testTag attributes across AuthDialog for pat_error_message, pat_success_message, device_code_display_card, device_user_code_text, and device_flow_status_text.
+  Verification: compile_applet succeeded cleanly.
 
 - Date/Time: 2026-09-27T12:25:40-07:00
   Phase: Phase 14 - RepoSelectorDialog Back Navigation, Semantics, and Comprehensive UI Testing

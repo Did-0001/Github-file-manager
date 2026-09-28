@@ -2,6 +2,7 @@ package com.example.ui.screens.auth
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -60,6 +61,11 @@ fun AuthDialog(
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+
+    BackHandler(enabled = userCode != null) {
+        userCode = null
+        onCancelDeviceFlow()
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -203,13 +209,17 @@ fun AuthDialog(
                                 Text(
                                     text = patError!!,
                                     color = GhDarkAccentRed,
-                                    fontSize = 12.sp
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.testTag("pat_error_message")
                                 )
                             }
 
                             if (patSuccessUser != null) {
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.testTag("pat_success_message")
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.CheckCircle,
                                         contentDescription = null,
@@ -330,7 +340,7 @@ fun AuthDialog(
                                     color = MaterialTheme.colorScheme.surfaceVariant,
                                     shape = RoundedCornerShape(12.dp),
                                     border = BorderStroke(1.dp, GhDarkAccentBlue),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth().testTag("device_code_display_card")
                                 ) {
                                     Column(
                                         modifier = Modifier.padding(16.dp),
@@ -348,7 +358,8 @@ fun AuthDialog(
                                             fontWeight = FontWeight.ExtraBold,
                                             fontFamily = FontFamily.Monospace,
                                             color = GhDarkAccentBlue,
-                                            letterSpacing = 4.sp
+                                            letterSpacing = 4.sp,
+                                            modifier = Modifier.testTag("device_user_code_text")
                                         )
                                         Spacer(modifier = Modifier.height(12.dp))
 
@@ -406,7 +417,8 @@ fun AuthDialog(
                                     Text(
                                         text = statusText,
                                         fontSize = 12.sp,
-                                        color = if (deviceFlowState is DeviceFlowState.Error || deviceFlowState is DeviceFlowState.AccessDenied) GhDarkAccentRed else MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = if (deviceFlowState is DeviceFlowState.Error || deviceFlowState is DeviceFlowState.AccessDenied) GhDarkAccentRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag("device_flow_status_text")
                                     )
                                 }
 
