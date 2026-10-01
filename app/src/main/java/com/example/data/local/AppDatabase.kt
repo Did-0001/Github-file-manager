@@ -16,7 +16,7 @@ import com.example.data.local.entity.TransferItemEntity
         TransferEntity::class,
         TransferItemEntity::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -49,6 +49,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration from version 3 to version 4:
+         * In version 4, selectedPathsJson was added to transfers table for exact selected paths persistence.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transfers` ADD COLUMN `selectedPathsJson` TEXT DEFAULT NULL")
+            }
+        }
+
+        /**
+         * Migration from version 4 to version 5:
+         * In version 5, clearHistory was added to transfers table for explicit Git history clear support.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transfers` ADD COLUMN `clearHistory` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: android.content.Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = androidx.room.Room.databaseBuilder(
@@ -56,7 +76,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "github_file_manager.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

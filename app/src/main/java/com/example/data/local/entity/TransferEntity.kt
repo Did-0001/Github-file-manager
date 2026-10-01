@@ -21,7 +21,8 @@ data class TransferEntity(
     val commitSha: String? = null,
     val commitMessage: String? = null,
     val isWipe: Boolean = false,
-    val wipeMode: String = "NONE", // NONE, DESTINATION, FULL_BRANCH
+    val wipeMode: String = "NONE", // NONE, SELECTED_FOLDER, DESTINATION, CHANGED_FOLDERS, FULL_BRANCH
+    val clearHistory: Boolean = false,
     val reviewedHeadSha: String? = null,
     // Download Configuration Persistence
     val overwritePolicy: String = "OVERWRITE", // OVERWRITE, SKIP, KEEP_BOTH
@@ -31,6 +32,7 @@ data class TransferEntity(
     val downloadScope: String = "REPOSITORY", // REPOSITORY, DIRECTORY, SINGLE_FILE, SELECTED_ITEMS
     val remotePath: String = "",
     val destinationUri: String = "",
+    val selectedPathsJson: String? = null,
     val errorMessage: String? = null,
     val retryCount: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),

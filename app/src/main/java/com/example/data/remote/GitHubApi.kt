@@ -47,6 +47,21 @@ interface GitHubApi {
         @Path("branch") branch: String
     ): Response<GitHubBranchDto>
 
+    @POST("repos/{owner}/{repo}/branches/{branch}/rename")
+    suspend fun renameBranch(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path(value = "branch", encoded = true) branch: String,
+        @Body body: RenameBranchRequest
+    ): Response<GitHubBranchDto>
+
+    @PATCH("repos/{owner}/{repo}")
+    suspend fun updateRepo(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Body body: UpdateRepoRequest
+    ): Response<GitHubRepoDto>
+
     // Directory Contents & Files (Real on-demand tree browsing)
     @GET("repos/{owner}/{repo}/contents/{path}")
     suspend fun getContents(
@@ -109,6 +124,20 @@ interface GitHubApi {
         @Path("branch") branch: String,
         @Body body: UpdateRefRequest
     ): Response<GitRefResponse>
+
+    @POST("repos/{owner}/{repo}/git/refs")
+    suspend fun createRef(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Body body: CreateRefRequest
+    ): Response<GitRefResponse>
+
+    @DELETE("repos/{owner}/{repo}/git/refs/heads/{branch}")
+    suspend fun deleteRef(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path(value = "branch", encoded = true) branch: String
+    ): Response<ResponseBody>
 
     @GET("repos/{owner}/{repo}/git/commits/{commit_sha}")
     suspend fun getCommit(

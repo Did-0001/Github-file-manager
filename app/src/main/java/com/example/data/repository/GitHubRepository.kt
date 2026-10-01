@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import com.example.data.cache.GitHubCacheManager
 import com.example.data.remote.ApiClient
 import com.example.data.remote.ApiErrorType
 import com.example.data.remote.GitHubApiException
@@ -8,7 +9,10 @@ import com.squareup.moshi.Types
 import okhttp3.ResponseBody
 import retrofit2.Response
 
-class GitHubRepository(private val apiClient: ApiClient) {
+class GitHubRepository(
+    private val apiClient: ApiClient,
+    val cacheManager: GitHubCacheManager? = null
+) {
 
     private val contentListAdapter by lazy {
         val type = Types.newParameterizedType(List::class.java, GitHubContentDto::class.java)
@@ -45,7 +49,13 @@ class GitHubRepository(private val apiClient: ApiClient) {
         }
     }
 
-    suspend fun getAllUserRepos(): Result<List<GitHubRepoDto>> {
+    suspend fun getAllUserRepos(bypassCache: Boolean = false): Result<List<GitHubRepoDto>> {
+        if (!bypassCache) {
+            val cached = cacheManager?.getRepos()
+            if (cached != null) {
+                return Result.success(cached)
+            }
+        }
         val allRepos = mutableListOf<GitHubRepoDto>()
         var page = 1
         while (true) {
@@ -58,7 +68,9 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (list.size < 100) break
             page++
         }
-        return Result.success(allRepos.distinctBy { it.id })
+        val distinct = allRepos.distinctBy { it.id }
+        cacheManager?.putRepos(distinct)
+        return Result.success(distinct)
     }
 
     suspend fun createRepo(name: String, description: String?, isPrivate: Boolean): Result<GitHubRepoDto> {
@@ -66,7 +78,9 @@ class GitHubRepository(private val apiClient: ApiClient) {
             val req = CreateRepoRequest(name = name, description = description, isPrivate = isPrivate, autoInit = true)
             val response = apiClient.gitHubApi.createRepo(req)
             if (response.isSuccessful && response.body() != null) {
-                Result.success(response.body()!!)
+                val created = response.body()!!
+                cacheManager?.clearAllCache()
+                Result.success(created)
             } else {
                 Result.failure(GitHubApiException.fromResponse(response))
             }
@@ -88,7 +102,13 @@ class GitHubRepository(private val apiClient: ApiClient) {
         }
     }
 
-    suspend fun getAllBranches(owner: String, repo: String): Result<List<GitHubBranchDto>> {
+    suspend fun getAllBranches(owner: String, repo: String, bypassCache: Boolean = false): Result<List<GitHubBranchDto>> {
+        if (!bypassCache) {
+            val cached = cacheManager?.getBranches(owner, repo)
+            if (cached != null) {
+                return Result.success(cached)
+            }
+        }
         val allBranches = mutableListOf<GitHubBranchDto>()
         var page = 1
         while (true) {
@@ -101,22 +121,176 @@ class GitHubRepository(private val apiClient: ApiClient) {
             if (list.size < 100) break
             page++
         }
-        return Result.success(allBranches.distinctBy { it.name })
+        val distinct = allBranches.distinctBy { it.name }
+        cacheManager?.putBranches(owner, repo, distinct)
+        return Result.success(distinct)
+    }
+
+    suspend fun getBranchDetails(
+        owner: String,
+        repo: String,
+        branch: String,
+        bypassCache: Boolean = false
+    ): Result<GitHubBranchDto> {
+        if (!bypassCache) {
+            val cached = cacheManager?.getBranchDetails(owner, repo, branch)
+            if (cached != null) {
+                return Result.success(cached)
+            }
+        }
+        return try {
+            val response = apiClient.gitHubApi.getBranch(owner, repo, branch)
+            if (response.isSuccessful && response.body() != null) {
+                val details = response.body()!!
+                cacheManager?.putBranchDetails(owner, repo, branch, details)
+                Result.success(details)
+            } else {
+                Result.failure(GitHubApiException.fromResponse(response))
+            }
+        } catch (e: Exception) {
+            Result.failure(GitHubApiException.fromThrowable(e))
+        }
+    }
+
+    suspend fun createBranch(
+        owner: String,
+        repo: String,
+        newBranchName: String,
+        sourceBranchSha: String
+    ): Result<GitRefResponse> {
+        return try {
+            val ref = "refs/heads/$newBranchName"
+            val response = apiClient.gitHubApi.createRef(owner, repo, CreateRefRequest(ref = ref, sha = sourceBranchSha))
+            if (response.isSuccessful && response.body() != null) {
+                cacheManager?.clearRepoCache(owner, repo)
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(GitHubApiException.fromResponse(response))
+            }
+        } catch (e: Exception) {
+            Result.failure(GitHubApiException.fromThrowable(e))
+        }
+    }
+
+    suspend fun renameBranch(
+        owner: String,
+        repo: String,
+        oldBranchName: String,
+        newBranchName: String
+    ): Result<GitHubBranchDto> {
+        return try {
+            val response = apiClient.gitHubApi.renameBranch(owner, repo, oldBranchName, RenameBranchRequest(newName = newBranchName))
+            if (response.isSuccessful && response.body() != null) {
+                cacheManager?.clearRepoCache(owner, repo)
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(GitHubApiException.fromResponse(response))
+            }
+        } catch (e: Exception) {
+            Result.failure(GitHubApiException.fromThrowable(e))
+        }
+    }
+
+    suspend fun deleteBranch(
+        owner: String,
+        repo: String,
+        branchName: String
+    ): Result<Unit> {
+        return try {
+            val response = apiClient.gitHubApi.deleteRef(owner, repo, branchName)
+            if (response.isSuccessful) {
+                cacheManager?.clearRepoCache(owner, repo)
+                Result.success(Unit)
+            } else {
+                Result.failure(GitHubApiException.fromResponse(response))
+            }
+        } catch (e: Exception) {
+            Result.failure(GitHubApiException.fromThrowable(e))
+        }
+    }
+
+    suspend fun setDefaultBranch(
+        owner: String,
+        repo: String,
+        newDefaultBranch: String
+    ): Result<GitHubRepoDto> {
+        return try {
+            val response = apiClient.gitHubApi.updateRepo(owner, repo, UpdateRepoRequest(defaultBranch = newDefaultBranch))
+            if (response.isSuccessful && response.body() != null) {
+                cacheManager?.clearRepoCache(owner, repo)
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(GitHubApiException.fromResponse(response))
+            }
+        } catch (e: Exception) {
+            Result.failure(GitHubApiException.fromThrowable(e))
+        }
+    }
+
+    companion object {
+        fun validateBranchName(name: String, existingBranches: List<String>): String? {
+            val trimmed = name.trim()
+            if (trimmed.isEmpty()) return "Branch name cannot be empty"
+            if (existingBranches.any { it.equals(trimmed, ignoreCase = true) }) {
+                return "A branch named '$trimmed' already exists"
+            }
+            if (trimmed.startsWith("/") || trimmed.startsWith("-") || trimmed.startsWith(".")) {
+                return "Branch name cannot start with '/', '-', or '.'"
+            }
+            if (trimmed.endsWith("/") || trimmed.endsWith(".") || trimmed.endsWith(".lock")) {
+                return "Branch name cannot end with '/', '.', or '.lock'"
+            }
+            if (trimmed.contains("..") || trimmed.contains("//") || trimmed.contains("@{")) {
+                return "Branch name contains invalid character sequences ('..', '//', '@{')"
+            }
+            val invalidChars = listOf(' ', '~', '^', ':', '?', '*', '[', '\\')
+            if (trimmed.any { it in invalidChars }) {
+                return "Branch name contains invalid characters (spaces, ~, ^, :, ?, *, [, \\)"
+            }
+            return null
+        }
     }
 
     suspend fun getDirectoryContents(
         owner: String,
         repo: String,
         path: String,
-        branch: String?
+        branch: String?,
+        bypassCache: Boolean = false
     ): Result<List<GitHubContentDto>> {
+        val targetBranch = branch ?: "HEAD"
+        if (!bypassCache) {
+            val cached = cacheManager?.getDirectoryContents(owner, repo, targetBranch, path)
+            if (cached != null) {
+                return Result.success(cached)
+            }
+        }
         return try {
             val cleanPath = path.trimStart('/').trimEnd('/')
             if (cleanPath.isEmpty()) {
                 val response = apiClient.gitHubApi.getRootContents(owner, repo, branch)
                 if (response.isSuccessful && response.body() != null) {
-                    val sorted = response.body()!!.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                    val list = response.body()!!
+                    // If directory has 1000 items, Contents API is truncated -> fetch via Git Tree API
+                    if (list.size >= 1000) {
+                        val treeRes = getDirectoryContentsViaTree(owner, repo, cleanPath, branch)
+                        if (treeRes.isSuccess) {
+                            val items = treeRes.getOrThrow()
+                            cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, items)
+                            return treeRes
+                        }
+                    }
+                    val sorted = list.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                    cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, sorted)
                     return Result.success(sorted)
+                } else if (response.code() in listOf(403, 409, 422)) {
+                    val treeRes = getDirectoryContentsViaTree(owner, repo, cleanPath, branch)
+                    if (treeRes.isSuccess) {
+                        val items = treeRes.getOrThrow()
+                        cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, items)
+                        return treeRes
+                    }
+                    return Result.failure(GitHubApiException.fromResponse(response))
                 } else {
                     return Result.failure(GitHubApiException.fromResponse(response))
                 }
@@ -127,21 +301,105 @@ class GitHubRepository(private val apiClient: ApiClient) {
                 val bodyString = response.body()!!.string().trim()
                 if (bodyString.startsWith("[")) {
                     val list = contentListAdapter.fromJson(bodyString) ?: emptyList()
+                    // If directory has 1000 items, Contents API is truncated -> fetch via Git Tree API
+                    if (list.size >= 1000) {
+                        val treeRes = getDirectoryContentsViaTree(owner, repo, cleanPath, branch)
+                        if (treeRes.isSuccess) {
+                            val items = treeRes.getOrThrow()
+                            cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, items)
+                            return treeRes
+                        }
+                    }
                     val sorted = list.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                    cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, sorted)
                     Result.success(sorted)
                 } else if (bodyString.startsWith("{")) {
                     val single = singleContentAdapter.fromJson(bodyString)
-                    if (single != null) {
-                        Result.success(listOf(single))
-                    } else {
-                        Result.success(emptyList())
-                    }
+                    val result = if (single != null) listOf(single) else emptyList()
+                    cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, result)
+                    Result.success(result)
                 } else {
                     Result.success(emptyList())
+                }
+            } else if (response.code() in listOf(403, 409, 422)) {
+                val treeRes = getDirectoryContentsViaTree(owner, repo, cleanPath, branch)
+                if (treeRes.isSuccess) {
+                    val items = treeRes.getOrThrow()
+                    cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, items)
+                    treeRes
+                } else {
+                    Result.failure(GitHubApiException.fromResponse(response))
                 }
             } else {
                 Result.failure(GitHubApiException.fromResponse(response))
             }
+        } catch (e: Exception) {
+            val treeRes = getDirectoryContentsViaTree(owner, repo, path, branch)
+            if (treeRes.isSuccess) {
+                val items = treeRes.getOrThrow()
+                cacheManager?.putDirectoryContents(owner, repo, targetBranch, path, items)
+                treeRes
+            } else {
+                Result.failure(GitHubApiException.fromThrowable(e))
+            }
+        }
+    }
+
+    suspend fun getDirectoryContentsViaTree(
+        owner: String,
+        repo: String,
+        path: String,
+        branch: String?
+    ): Result<List<GitHubContentDto>> {
+        return try {
+            val cleanPath = path.trimStart('/').trimEnd('/')
+            val targetBranch = branch ?: "HEAD"
+            val headRes = getBranchHeadSha(owner, repo, targetBranch)
+            if (headRes.isFailure) return Result.failure(headRes.exceptionOrNull() ?: Exception("Failed to resolve branch ref"))
+            val commitSha = headRes.getOrThrow()
+
+            val treeShaRes = getCommitTreeSha(owner, repo, commitSha)
+            if (treeShaRes.isFailure) return Result.failure(treeShaRes.exceptionOrNull() ?: Exception("Failed to resolve commit tree"))
+            var currentTreeSha = treeShaRes.getOrThrow()
+
+            if (cleanPath.isNotEmpty()) {
+                val segments = cleanPath.split('/')
+                for (segment in segments) {
+                    val treeRes = getTree(owner, repo, currentTreeSha, recursive = false)
+                    if (treeRes.isFailure) return Result.failure(treeRes.exceptionOrNull() ?: Exception("Failed to fetch subtree"))
+                    val treeItems = treeRes.getOrThrow().tree
+                    val matchingSubtree = treeItems.firstOrNull { it.path == segment && it.type == "tree" }
+                        ?: return Result.success(emptyList())
+                    currentTreeSha = matchingSubtree.sha
+                }
+            }
+
+            val treeRes = getTree(owner, repo, currentTreeSha, recursive = false)
+            if (treeRes.isFailure) return Result.failure(treeRes.exceptionOrNull() ?: Exception("Failed to fetch tree"))
+            val treeResponse = treeRes.getOrThrow()
+            val rawItems = if (!treeResponse.truncated) {
+                treeResponse.tree
+            } else {
+                val fullRes = getFullTree(owner, repo, currentTreeSha)
+                if (fullRes.isFailure) return Result.failure(fullRes.exceptionOrNull() ?: Exception("Failed to fetch full tree"))
+                fullRes.getOrThrow()
+            }
+
+            val dtoList = rawItems.map { item ->
+                val itemPath = if (cleanPath.isEmpty()) item.path else "$cleanPath/${item.path}"
+                val isDir = item.type == "tree"
+                GitHubContentDto(
+                    name = item.path,
+                    path = itemPath,
+                    sha = item.sha,
+                    size = item.size ?: 0,
+                    type = if (isDir) "dir" else "file",
+                    downloadUrl = null,
+                    htmlUrl = ""
+                )
+            }
+            val sorted = dtoList.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+            Result.success(sorted)
         } catch (e: Exception) {
             Result.failure(GitHubApiException.fromThrowable(e))
         }
@@ -172,6 +430,35 @@ class GitHubRepository(private val apiClient: ApiClient) {
         }
     }
 
+    suspend fun getFileContent(
+        owner: String,
+        repo: String,
+        path: String,
+        branch: String?,
+        bypassCache: Boolean = false
+    ): Result<String> {
+        val targetBranch = branch ?: "HEAD"
+        if (!bypassCache) {
+            val cached = cacheManager?.getFileContent(owner, repo, targetBranch, path)
+            if (cached != null) {
+                return Result.success(cached)
+            }
+        }
+        val detailsRes = getFileDetails(owner, repo, path, targetBranch)
+        if (detailsRes.isFailure) return Result.failure(detailsRes.exceptionOrNull() ?: Exception("Failed to fetch file details"))
+        val details = detailsRes.getOrThrow()
+        val text = details.content?.let { raw ->
+            try {
+                if (details.encoding == "base64") {
+                    val clean = raw.replace("\n", "").replace("\r", "")
+                    String(android.util.Base64.decode(clean, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                } else raw
+            } catch (_: Exception) { raw }
+        } ?: ""
+        cacheManager?.putFileContent(owner, repo, targetBranch, path, text)
+        return Result.success(text)
+    }
+
     suspend fun createOrUpdateFile(
         owner: String,
         repo: String,
@@ -191,6 +478,7 @@ class GitHubRepository(private val apiClient: ApiClient) {
             )
             val response = apiClient.gitHubApi.createOrUpdateFile(owner, repo, cleanPath, body)
             if (response.isSuccessful) {
+                cacheManager?.clearRepoCache(owner, repo)
                 Result.success(Unit)
             } else {
                 Result.failure(GitHubApiException.fromResponse(response))
@@ -217,6 +505,7 @@ class GitHubRepository(private val apiClient: ApiClient) {
             )
             val response = apiClient.gitHubApi.deleteFile(owner, repo, cleanPath, body)
             if (response.isSuccessful) {
+                cacheManager?.clearRepoCache(owner, repo)
                 Result.success(Unit)
             } else {
                 Result.failure(GitHubApiException.fromResponse(response))
@@ -431,10 +720,16 @@ class GitHubRepository(private val apiClient: ApiClient) {
         repo: String,
         message: String,
         treeSha: String,
-        parentCommitSha: String
+        parentCommitSha: String? = null,
+        parents: List<String>? = null
     ): Result<String> {
         return try {
-            val req = CreateCommitRequest(message = message, tree = treeSha, parents = listOf(parentCommitSha))
+            val parentList = when {
+                parents != null -> parents
+                parentCommitSha != null -> listOf(parentCommitSha)
+                else -> emptyList()
+            }
+            val req = CreateCommitRequest(message = message, tree = treeSha, parents = parentList)
             val response = apiClient.gitHubApi.createCommit(owner, repo, req)
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!.sha)

@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.SelectedRepoInfo
+import com.example.data.remote.dto.GitHubBranchDto
 import com.example.data.remote.dto.GitHubContentDto
 import com.example.ui.components.BreadcrumbsRow
 import com.example.ui.components.EmptyStateView
@@ -56,6 +58,14 @@ fun RepoBrowserScreen(
     onDownloadSelected: (List<String>) -> Unit = {},
     onUploadToFolder: ((String) -> Unit)? = null,
     onOpenRepoSelector: () -> Unit,
+    branches: List<GitHubBranchDto> = emptyList(),
+    isLoadingBranches: Boolean = false,
+    onRefreshBranches: () -> Unit = {},
+    onSelectBranch: (String) -> Unit = {},
+    onCreateBranch: (name: String, sourceBranch: String, onComplete: (Boolean, String?) -> Unit) -> Unit = { _, _, _ -> },
+    onRenameBranch: (oldName: String, newName: String, onComplete: (Boolean, String?) -> Unit) -> Unit = { _, _, _ -> },
+    onDeleteBranch: (name: String, onComplete: (Boolean, String?) -> Unit) -> Unit = { _, _ -> },
+    onSetDefaultBranch: (name: String, onComplete: (Boolean, String?) -> Unit) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -67,6 +77,8 @@ fun RepoBrowserScreen(
     var showCreateDirDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showBatchDeleteDialog by remember { mutableStateOf(false) }
+    var showBranchManagementDialog by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
 
     // Multi-selection state
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -83,7 +95,7 @@ fun RepoBrowserScreen(
     val hasActiveDialog = viewingFile != null || editingFile != null ||
             selectedFileForDetail != null || selectedFolderForDetail != null ||
             showCreateFileDialog || showCreateDirDialog ||
-            showDeleteConfirmDialog || showBatchDeleteDialog
+            showDeleteConfirmDialog || showBatchDeleteDialog || showBranchManagementDialog
 
     BackHandler(enabled = isSelectionMode || hasActiveDialog || currentPath.isNotEmpty()) {
         when {
@@ -91,6 +103,7 @@ fun RepoBrowserScreen(
                 isSelectionMode = false
                 selectedPaths.clear()
             }
+            showBranchManagementDialog -> showBranchManagementDialog = false
             viewingFile != null -> viewingFile = null
             editingFile != null -> editingFile = null
             selectedFileForDetail != null -> selectedFileForDetail = null
@@ -229,24 +242,38 @@ fun RepoBrowserScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { showBranchManagementDialog = true }
+                                        .testTag("browser_branch_selector")
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.ForkRight,
                                         contentDescription = null,
                                         tint = GhDarkAccentPurple,
-                                        modifier = Modifier.size(14.dp)
+                                        modifier = Modifier.size(13.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
                                     Text(
                                         text = selectedRepo?.branch ?: "main",
                                         fontSize = 12.sp,
                                         fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Manage branches",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(15.dp)
                                     )
                                 }
                             }
 
-                            Row {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(
                                     onClick = onRefresh,
                                     modifier = Modifier.testTag("browser_refresh_button")
@@ -278,6 +305,34 @@ fun RepoBrowserScreen(
                                     modifier = Modifier.testTag("browser_create_dir_button")
                                 ) {
                                     Icon(imageVector = Icons.Default.CreateNewFolder, contentDescription = "New Folder")
+                                }
+                                Box {
+                                    IconButton(
+                                        onClick = { showOverflowMenu = true },
+                                        modifier = Modifier.testTag("browser_overflow_menu")
+                                    ) {
+                                        Icon(imageVector = Icons.Default.MoreVert, contentDescription = "More options")
+                                    }
+                                    DropdownMenu(
+                                        expanded = showOverflowMenu,
+                                        onDismissRequest = { showOverflowMenu = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Branch management") },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.ForkRight,
+                                                    contentDescription = null,
+                                                    tint = GhDarkAccentPurple
+                                                )
+                                            },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                showBranchManagementDialog = true
+                                            },
+                                            modifier = Modifier.testTag("menu_branch_management")
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -366,7 +421,7 @@ fun RepoBrowserScreen(
                 )
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("browser_item_list"),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -1054,6 +1109,25 @@ fun RepoBrowserScreen(
                     cb(success, err)
                 }
             }
+        )
+    }
+
+    // Branch Management Dialog
+    if (showBranchManagementDialog) {
+        BranchManagementDialog(
+            selectedRepo = selectedRepo,
+            branches = branches,
+            isLoading = isLoadingBranches,
+            onDismiss = { showBranchManagementDialog = false },
+            onRefreshBranches = onRefreshBranches,
+            onSelectBranch = { branch ->
+                showBranchManagementDialog = false
+                onSelectBranch(branch)
+            },
+            onCreateBranch = onCreateBranch,
+            onRenameBranch = onRenameBranch,
+            onDeleteBranch = onDeleteBranch,
+            onSetDefaultBranch = onSetDefaultBranch
         )
     }
 }

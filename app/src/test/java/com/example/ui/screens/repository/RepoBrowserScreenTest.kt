@@ -102,6 +102,7 @@ class RepoBrowserScreenTest {
         composeTestRule.onNodeWithTag("browser_item_src").assertIsDisplayed()
         composeTestRule.onNodeWithTag("browser_item_docs").assertIsDisplayed()
         composeTestRule.onNodeWithTag("browser_item_README.md").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("browser_item_list").performScrollToNode(hasTestTag("browser_item_build.gradle.kts"))
         composeTestRule.onNodeWithTag("browser_item_build.gradle.kts").assertIsDisplayed()
     }
 

@@ -28,103 +28,14 @@ class WorkManagerAndSafStressTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
-    // Pure mapping function mirroring TransferWorker.mapWorkerResult
+    // Calls actual production TransferWorker.mapWorkerResult
     private fun mapWorkerResult(
         entity: TransferEntity?,
         isStopped: Boolean,
         caughtException: Throwable?,
         runAttemptCount: Int
     ): ListenableWorker.Result {
-        val statusStr = entity?.status
-        val status = try { statusStr?.let { TransferStatus.valueOf(it) } } catch (_: Exception) { null }
-
-        // 1. Branch conflict
-        if (status == TransferStatus.CONFLICT) {
-            return ListenableWorker.Result.failure(
-                workDataOf(
-                    "reason" to "conflict",
-                    "error" to (entity?.errorMessage ?: "Branch conflict detected")
-                )
-            )
-        }
-
-        // 2. Pause
-        if (status == TransferStatus.PAUSED || (isStopped && status == TransferStatus.PAUSED)) {
-            return ListenableWorker.Result.success(
-                workDataOf("reason" to "pause")
-            )
-        }
-
-        // 3. Cancellation
-        if (status == TransferStatus.CANCELLED || (isStopped && caughtException is CancellationException)) {
-            return ListenableWorker.Result.failure(
-                workDataOf("reason" to "cancellation")
-            )
-        }
-
-        // 4. Completed
-        if (status == TransferStatus.COMPLETED) {
-            return ListenableWorker.Result.success(
-                workDataOf("reason" to "completed")
-            )
-        }
-
-        // 5. Retryable vs Permanent failure
-        val isRetryable = isRetryableError(caughtException, entity?.errorMessage)
-        if (isRetryable && runAttemptCount < 3) {
-            return ListenableWorker.Result.retry()
-        }
-
-        return ListenableWorker.Result.failure(
-            workDataOf(
-                "reason" to "permanent_failure",
-                "error" to (entity?.errorMessage ?: caughtException?.localizedMessage ?: "Transfer failed")
-            )
-        )
-    }
-
-    private fun isRetryableError(throwable: Throwable?, errorMessage: String?): Boolean {
-        if (throwable is GitHubApiException) {
-            return throwable.isRetryable
-        }
-        if (throwable?.cause is GitHubApiException) {
-            return (throwable.cause as GitHubApiException).isRetryable
-        }
-        if (throwable is SocketTimeoutException ||
-            throwable is UnknownHostException ||
-            throwable is java.net.ConnectException ||
-            throwable is java.net.NoRouteToHostException ||
-            throwable is java.io.InterruptedIOException ||
-            throwable is IOException
-        ) {
-            return true
-        }
-        val msg = (errorMessage ?: throwable?.message ?: "").lowercase()
-        if (msg.contains("conflict") ||
-            msg.contains("401") || msg.contains("auth") ||
-            (msg.contains("403") && !msg.contains("rate limit")) ||
-            msg.contains("404") || msg.contains("not found") ||
-            msg.contains("422") || msg.contains("validation") ||
-            msg.contains("permission revoked") ||
-            msg.contains("cannot access local") ||
-            msg.contains("directory missing") ||
-            msg.contains("file missing")
-        ) {
-            return false
-        }
-        if (msg.contains("timeout") ||
-            msg.contains("unable to resolve host") ||
-            msg.contains("connection reset") ||
-            msg.contains("failed to connect") ||
-            msg.contains("network") ||
-            msg.contains("socket") ||
-            msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504") ||
-            msg.contains("server error") ||
-            msg.contains("429") || msg.contains("rate limit")
-        ) {
-            return true
-        }
-        return false
+        return TransferWorker.mapWorkerResult(entity, isStopped, caughtException, runAttemptCount)
     }
 
     @Test

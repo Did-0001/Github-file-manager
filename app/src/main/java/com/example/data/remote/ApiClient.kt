@@ -34,7 +34,7 @@ class ApiClient(
         level = HttpLoggingInterceptor.Level.BASIC
     }
 
-    private val authInterceptor = AuthInterceptor(secureStorage)
+    private val authInterceptor = AuthInterceptor(secureStorage, customBaseUrl)
 
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(authInterceptor)

@@ -346,4 +346,79 @@ class GitHubPathPickerDialogTest {
         // After retry, contents should load
         composeTestRule.onNodeWithText("app").assertIsDisplayed()
     }
+
+    @Test
+    fun selectedItemMode_allowsSelectingFolderOrFile() {
+        var confirmedPath: String? = null
+
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                GitHubPathPickerContent(
+                    selectedRepo = testRepo,
+                    initialPath = "",
+                    pickerMode = GitHubPickerMode.SELECTED_ITEM,
+                    onFetchDirectory = { _, _, path, _ ->
+                        Result.success(createDirectoryContents(path))
+                    },
+                    onDismiss = {},
+                    onPathConfirmed = { confirmedPath = it }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+
+        // Verify title
+        composeTestRule.onNodeWithText("Select GitHub Item").assertIsDisplayed()
+
+        // Select file README.md
+        composeTestRule.onNodeWithTag("path_picker_item_README.md").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("path_picker_selected_path_text").assertTextContains("README.md")
+        composeTestRule.onNodeWithTag("path_picker_confirm_btn").assertIsEnabled()
+
+        // Now select folder "docs" using the folder select button
+        composeTestRule.onNodeWithTag("select_folder_docs").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("path_picker_selected_path_text").assertTextContains("docs")
+
+        // Confirm
+        composeTestRule.onNodeWithTag("path_picker_confirm_btn").performClick()
+        assertEquals("docs", confirmedPath)
+    }
+
+    @Test
+    fun selectedItemMode_canSelectFileInsideSubfolder() {
+        var confirmedPath: String? = null
+
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                GitHubPathPickerContent(
+                    selectedRepo = testRepo,
+                    initialPath = "",
+                    pickerMode = GitHubPickerMode.SELECTED_ITEM,
+                    onFetchDirectory = { _, _, path, _ ->
+                        Result.success(createDirectoryContents(path))
+                    },
+                    onDismiss = {},
+                    onPathConfirmed = { confirmedPath = it }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+
+        // Navigate into "app"
+        composeTestRule.onNodeWithTag("path_picker_item_app").performClick()
+        composeTestRule.waitForIdle()
+
+        // Click file "build.gradle.kts"
+        composeTestRule.onNodeWithTag("path_picker_item_app/build.gradle.kts").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("path_picker_confirm_btn").performClick()
+        assertEquals("app/build.gradle.kts", confirmedPath)
+    }
 }

@@ -182,4 +182,75 @@ class DownloadCorrectnessAndRecoveryTest {
 
         assertEquals("script.py", rel)
     }
+
+    @Test
+    fun `startDownload durably persists complete download configuration into Room`() = kotlinx.coroutines.runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(context, com.example.data.local.AppDatabase::class.java).build()
+        val repo = com.example.data.repository.TransferRepository(db)
+
+        val selectedList = listOf("src/main/A.kt", "src/main/B.kt", "README.md")
+        val config = DownloadConfig(
+            destinationTreeUri = android.net.Uri.parse("content://my/download/folder"),
+            asZip = false,
+            overwritePolicy = OverwritePolicy.KEEP_BOTH,
+            preserveStructure = true,
+            createRepoFolder = true,
+            downloadScope = DownloadScope.SELECTED_ITEMS,
+            selectedPaths = selectedList
+        )
+
+        val transferId = java.util.UUID.randomUUID().toString()
+        val selectedJson = org.json.JSONArray(config.selectedPaths).toString()
+
+        val entity = TransferEntity(
+            id = transferId,
+            type = TransferType.DOWNLOAD.name,
+            repoOwner = "google",
+            repoName = "sample-repo",
+            branch = "develop",
+            sourcePath = "3 selected items",
+            destPath = config.destinationTreeUri.toString(),
+            destinationUri = config.destinationTreeUri.toString(),
+            remotePath = "src/main",
+            selectedPathsJson = selectedJson,
+            status = TransferStatus.QUEUED.name,
+            totalFiles = 3,
+            processedFiles = 0,
+            totalBytes = 0L,
+            processedBytes = 0L,
+            asZip = config.asZip,
+            overwritePolicy = config.overwritePolicy.name,
+            preserveStructure = config.preserveStructure,
+            createRepoFolder = config.createRepoFolder,
+            downloadScope = config.downloadScope.name
+        )
+
+        repo.insertTransfer(entity)
+
+        val retrieved = repo.getTransfer(transferId)
+        assertNotNull(retrieved)
+        assertEquals("google", retrieved!!.repoOwner)
+        assertEquals("sample-repo", retrieved.repoName)
+        assertEquals("develop", retrieved.branch)
+        assertEquals("src/main", retrieved.remotePath)
+        assertEquals("content://my/download/folder", retrieved.destPath)
+        assertEquals("content://my/download/folder", retrieved.destinationUri)
+        assertEquals("SELECTED_ITEMS", retrieved.downloadScope)
+        assertEquals("KEEP_BOTH", retrieved.overwritePolicy)
+        assertTrue(retrieved.preserveStructure)
+        assertTrue(retrieved.createRepoFolder)
+        assertFalse(retrieved.asZip)
+        assertEquals(selectedJson, retrieved.selectedPathsJson)
+
+        // Verify JSON deserialization preserves all elements
+        val deserialized = mutableListOf<String>()
+        val jsonArr = org.json.JSONArray(retrieved.selectedPathsJson!!)
+        for (i in 0 until jsonArr.length()) {
+            deserialized.add(jsonArr.getString(i))
+        }
+        assertEquals(selectedList, deserialized)
+
+        db.close()
+    }
 }

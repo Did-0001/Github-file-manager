@@ -62,6 +62,12 @@ fun AuthDialog(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
 
+    LaunchedEffect(deviceFlowState) {
+        if (deviceFlowState is DeviceFlowState.Success) {
+            onDismiss()
+        }
+    }
+
     BackHandler(enabled = userCode != null) {
         userCode = null
         onCancelDeviceFlow()
@@ -246,6 +252,7 @@ fun AuthDialog(
                                         isVerifying = false
                                         if (success) {
                                             patSuccessUser = result
+                                            onDismiss()
                                         } else {
                                             patError = result ?: "Verification failed"
                                         }

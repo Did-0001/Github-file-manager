@@ -25,6 +25,7 @@ import com.example.data.local.SelectedRepoInfo
 import com.example.ui.screens.auth.AuthDialog
 import com.example.ui.screens.download.DownloadScreen
 import com.example.ui.screens.home.HomeScreen
+import com.example.ui.screens.repository.BranchManagementDialog
 import com.example.ui.screens.repository.RepoBrowserScreen
 import com.example.ui.screens.repository.RepoSelectorDialog
 import com.example.ui.screens.settings.SettingsScreen
@@ -53,6 +54,7 @@ fun MainAppScreen(
     var currentTab by remember { mutableStateOf(NavigationTab.HOME) }
     var showAuthDialog by remember { mutableStateOf(false) }
     var showRepoSelectorDialog by remember { mutableStateOf(false) }
+    var showBranchManagementDialog by remember { mutableStateOf(false) }
     var pendingUploadDestinationPath by remember { mutableStateOf<String?>(null) }
     var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
     var pendingDownloadIsFile by remember { mutableStateOf(false) }
@@ -70,6 +72,9 @@ fun MainAppScreen(
     val isLoadingContents by viewModel.isLoadingContents.collectAsStateWithLifecycle()
     val contentsError by viewModel.contentsError.collectAsStateWithLifecycle()
 
+    val branches by viewModel.branches.collectAsStateWithLifecycle()
+    val isLoadingBranches by viewModel.isLoadingBranches.collectAsStateWithLifecycle()
+
     val scannedFiles by viewModel.scannedFiles.collectAsStateWithLifecycle()
     val excludedItems by viewModel.excludedItems.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
@@ -78,12 +83,15 @@ fun MainAppScreen(
     val isCalculatingDiff by viewModel.isCalculatingDiff.collectAsStateWithLifecycle()
     val preflightReport by viewModel.preflightReport.collectAsStateWithLifecycle()
     val deviceFlowState by viewModel.deviceFlowState.collectAsStateWithLifecycle()
+    val cacheStats by viewModel.cacheStats.collectAsStateWithLifecycle()
 
     // Global and Tab Back Handling
     if (showAuthDialog) {
         BackHandler { showAuthDialog = false }
     } else if (showRepoSelectorDialog) {
         BackHandler { showRepoSelectorDialog = false }
+    } else if (showBranchManagementDialog) {
+        BackHandler { showBranchManagementDialog = false }
     } else {
         BackHandler(enabled = currentTab != NavigationTab.HOME) {
             currentTab = NavigationTab.HOME
@@ -105,7 +113,7 @@ fun MainAppScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         if (selectedRepo != null) {
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Surface(
                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                 shape = RoundedCornerShape(8.dp),
@@ -119,6 +127,38 @@ fun MainAppScreen(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                 ) {
                                     Icon(
+                                        imageVector = Icons.Default.Folder,
+                                        contentDescription = null,
+                                        tint = GhDarkAccentBlue,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = selectedRepo?.name ?: "",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            Surface(
+                                color = GhDarkAccentPurple.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { showBranchManagementDialog = true }
+                                    .testTag("topbar_branch_pill")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                ) {
+                                    Icon(
                                         imageVector = Icons.Default.ForkRight,
                                         contentDescription = null,
                                         tint = GhDarkAccentPurple,
@@ -126,13 +166,20 @@ fun MainAppScreen(
                                     )
                                     Spacer(modifier = Modifier.width(3.dp))
                                     Text(
-                                        text = "${selectedRepo?.name}:${selectedRepo?.branch}",
+                                        text = selectedRepo?.branch ?: "main",
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.SemiBold,
                                         color = GhDarkAccentPurple,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Manage branches",
+                                        tint = GhDarkAccentPurple,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                 }
                             }
@@ -222,9 +269,9 @@ fun MainAppScreen(
                         isScanning = isScanning,
                         ignoreRules = ignoreRules,
                         onUpdateIgnoreRules = { rules -> viewModel.updateIgnoreRules(rules) },
-                        onStartUpload = { destinationDir, commitMsg, isWipe, wipeMode ->
+                        onStartUpload = { destinationDir, commitMsg, isWipe, wipeMode, clearHistory ->
                             pendingUploadDestinationPath = null
-                            viewModel.startUpload(destinationDir, commitMsg, isWipe, wipeMode) {
+                            viewModel.startUpload(destinationDir, commitMsg, isWipe, wipeMode, clearHistory) {
                                 currentTab = NavigationTab.TRANSFERS
                             }
                         },
@@ -232,7 +279,7 @@ fun MainAppScreen(
                         diffReport = diffReport,
                         isCalculatingDiff = isCalculatingDiff,
                         preflightReport = preflightReport,
-                        onRunPreflight = { dest, isWipe, wipeMode -> viewModel.runPreflightAndDiff(dest, isWipe, wipeMode) },
+                        onRunPreflight = { dest, isWipe, wipeMode, clearHistory -> viewModel.runPreflightAndDiff(dest, isWipe, wipeMode, clearHistory) },
                         onFetchDirectory = { owner, repo, path, branch -> viewModel.fetchDirectoryContents(owner, repo, path, branch) }
                     )
                 }
@@ -264,7 +311,7 @@ fun MainAppScreen(
                         isLoading = isLoadingContents,
                         errorMessage = contentsError,
                         onNavigatePath = { path -> viewModel.browsePath(path) },
-                        onRefresh = { viewModel.refreshContents() },
+                        onRefresh = { viewModel.refreshContents(bypassCache = true) },
                         onCreateFile = { name, content, commitMsg, cb -> viewModel.createFile(name, content, commitMsg, cb) },
                         onCreateDirectory = { name, cb -> viewModel.createDirectory(name, cb) },
                         onDeleteFile = { file, commitMsg, cb -> viewModel.deleteFile(file, commitMsg, cb) },
@@ -293,7 +340,15 @@ fun MainAppScreen(
                             pendingUploadDestinationPath = folderPath
                             currentTab = NavigationTab.UPLOAD
                         },
-                        onOpenRepoSelector = { showRepoSelectorDialog = true }
+                        onOpenRepoSelector = { showRepoSelectorDialog = true },
+                        branches = branches,
+                        isLoadingBranches = isLoadingBranches,
+                        onRefreshBranches = { viewModel.loadBranchesForCurrentRepo() },
+                        onSelectBranch = { branch -> viewModel.selectBranch(branch) },
+                        onCreateBranch = { name, source, cb -> viewModel.createBranch(name, source, cb) },
+                        onRenameBranch = { old, new, cb -> viewModel.renameBranch(old, new, cb) },
+                        onDeleteBranch = { name, cb -> viewModel.deleteBranch(name, cb) },
+                        onSetDefaultBranch = { name, cb -> viewModel.setDefaultBranch(name, cb) }
                     )
                 }
 
@@ -317,6 +372,9 @@ fun MainAppScreen(
                         isAuthenticated = isAuthenticated,
                         authUser = authUser,
                         selectedRepo = selectedRepo,
+                        cacheStats = cacheStats,
+                        onSetCacheExpirationPolicy = { policy -> viewModel.setCacheExpirationPolicy(policy) },
+                        onClearCache = { viewModel.clearCache() },
                         onOpenAuth = { showAuthDialog = true },
                         onSignOut = { viewModel.signOut() },
                         onOpenRepoSelector = { showRepoSelectorDialog = true }
@@ -327,10 +385,23 @@ fun MainAppScreen(
     }
 
     // Auth Dialog
+    LaunchedEffect(deviceFlowState) {
+        if (deviceFlowState is com.example.data.repository.DeviceFlowState.Success) {
+            showAuthDialog = false
+        }
+    }
+
     if (showAuthDialog) {
         AuthDialog(
             onDismiss = { showAuthDialog = false },
-            onVerifyPat = { token, cb -> viewModel.verifyPat(token, cb) },
+            onVerifyPat = { token, cb ->
+                viewModel.verifyPat(token) { success, result ->
+                    cb(success, result)
+                    if (success) {
+                        showAuthDialog = false
+                    }
+                }
+            },
             onRequestDeviceCode = { clientId, cb -> viewModel.requestDeviceCode(clientId, cb) },
             deviceFlowState = deviceFlowState,
             onCancelDeviceFlow = { viewModel.cancelDeviceFlow() }
@@ -343,10 +414,29 @@ fun MainAppScreen(
             repos = userRepos,
             isLoading = isLoadingRepos,
             onDismiss = { showRepoSelectorDialog = false },
-            onRefreshRepos = { viewModel.loadUserRepos() },
+            onRefreshRepos = { viewModel.loadUserRepos(bypassCache = true) },
             onSelectRepo = { repo, branch -> viewModel.selectRepo(repo, branch) },
             onFetchBranches = { owner, repo -> viewModel.fetchBranches(owner, repo) },
             onCreateRepo = { name, desc, isPrivate, cb -> viewModel.createRepo(name, desc, isPrivate, cb) }
+        )
+    }
+
+    // Branch Management Dialog (via topbar pill)
+    if (showBranchManagementDialog) {
+        BranchManagementDialog(
+            selectedRepo = selectedRepo,
+            branches = branches,
+            isLoading = isLoadingBranches,
+            onDismiss = { showBranchManagementDialog = false },
+            onRefreshBranches = { viewModel.loadBranchesForCurrentRepo(bypassCache = true) },
+            onSelectBranch = { branch ->
+                showBranchManagementDialog = false
+                viewModel.selectBranch(branch)
+            },
+            onCreateBranch = { name, source, cb -> viewModel.createBranch(name, source, cb) },
+            onRenameBranch = { old, new, cb -> viewModel.renameBranch(old, new, cb) },
+            onDeleteBranch = { name, cb -> viewModel.deleteBranch(name, cb) },
+            onSetDefaultBranch = { name, cb -> viewModel.setDefaultBranch(name, cb) }
         )
     }
 }

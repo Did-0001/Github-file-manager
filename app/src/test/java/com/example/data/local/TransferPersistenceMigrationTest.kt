@@ -378,4 +378,174 @@ class TransferPersistenceMigrationTest {
         itemCursor.close()
         openHelper.close()
     }
+
+    @Test
+    fun `test migration 3 to 4 preserves transfer records and adds selectedPathsJson column`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "test_migration_3_4.db"
+        context.deleteDatabase(dbName)
+
+        val helperConfig = androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(dbName)
+            .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(3) {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `transfers` (
+                            `id` TEXT NOT NULL, `type` TEXT NOT NULL, `repoOwner` TEXT NOT NULL,
+                            `repoName` TEXT NOT NULL, `branch` TEXT NOT NULL, `sourcePath` TEXT NOT NULL,
+                            `destPath` TEXT NOT NULL, `status` TEXT NOT NULL, `totalFiles` INTEGER NOT NULL,
+                            `processedFiles` INTEGER NOT NULL, `totalBytes` INTEGER NOT NULL,
+                            `processedBytes` INTEGER NOT NULL, `currentFile` TEXT, `commitSha` TEXT,
+                            `commitMessage` TEXT, `isWipe` INTEGER NOT NULL, `wipeMode` TEXT NOT NULL,
+                            `reviewedHeadSha` TEXT, `overwritePolicy` TEXT NOT NULL DEFAULT 'OVERWRITE',
+                            `preserveStructure` INTEGER NOT NULL, `createRepoFolder` INTEGER NOT NULL,
+                            `asZip` INTEGER NOT NULL, `downloadScope` TEXT NOT NULL, `remotePath` TEXT NOT NULL,
+                            `destinationUri` TEXT NOT NULL, `errorMessage` TEXT, `retryCount` INTEGER NOT NULL,
+                            `createdAt` INTEGER NOT NULL, `completedAt` INTEGER, PRIMARY KEY(`id`)
+                        )
+                    """.trimIndent())
+                }
+
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+            })
+            .build()
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(helperConfig)
+        val db = openHelper.writableDatabase
+
+        db.execSQL("""
+            INSERT INTO `transfers` (
+                `id`, `type`, `repoOwner`, `repoName`, `branch`, `sourcePath`, `destPath`,
+                `status`, `totalFiles`, `processedFiles`, `totalBytes`, `processedBytes`,
+                `currentFile`, `commitSha`, `commitMessage`, `isWipe`, `wipeMode`,
+                `reviewedHeadSha`, `overwritePolicy`, `preserveStructure`, `createRepoFolder`,
+                `asZip`, `downloadScope`, `remotePath`, `destinationUri`, `errorMessage`,
+                `retryCount`, `createdAt`
+            ) VALUES (
+                'download-transfer-v3', 'DOWNLOAD', 'octocat', 'Hello-World', 'main', '3 selected items', 'content://dest',
+                'QUEUED', 3, 0, 1024, 0,
+                NULL, NULL, NULL, 0, 'NONE',
+                NULL, 'KEEP_BOTH', 1, 0,
+                0, 'SELECTED_ITEMS', 'src', 'content://dest', NULL,
+                0, 1710000000000
+            )
+        """.trimIndent())
+
+        // Apply MIGRATION_3_4
+        AppDatabase.MIGRATION_3_4.migrate(db)
+
+        val cursor = db.query("SELECT id, type, repoOwner, repoName, branch, status, downloadScope, remotePath, overwritePolicy, selectedPathsJson FROM transfers WHERE id = 'download-transfer-v3'")
+        assertTrue(cursor.moveToFirst())
+        assertEquals("download-transfer-v3", cursor.getString(cursor.getColumnIndexOrThrow("id")))
+        assertEquals("DOWNLOAD", cursor.getString(cursor.getColumnIndexOrThrow("type")))
+        assertEquals("octocat", cursor.getString(cursor.getColumnIndexOrThrow("repoOwner")))
+        assertEquals("SELECTED_ITEMS", cursor.getString(cursor.getColumnIndexOrThrow("downloadScope")))
+        assertEquals("src", cursor.getString(cursor.getColumnIndexOrThrow("remotePath")))
+        assertEquals("KEEP_BOTH", cursor.getString(cursor.getColumnIndexOrThrow("overwritePolicy")))
+        assertTrue("selectedPathsJson should be null by default after migration", cursor.isNull(cursor.getColumnIndexOrThrow("selectedPathsJson")))
+        cursor.close()
+
+        // Test inserting with selectedPathsJson populated
+        db.execSQL("UPDATE transfers SET selectedPathsJson = '[\"src/A.kt\",\"src/B.kt\"]' WHERE id = 'download-transfer-v3'")
+        val updatedCursor = db.query("SELECT selectedPathsJson FROM transfers WHERE id = 'download-transfer-v3'")
+        assertTrue(updatedCursor.moveToFirst())
+        assertEquals("[\"src/A.kt\",\"src/B.kt\"]", updatedCursor.getString(0))
+        updatedCursor.close()
+
+        openHelper.close()
+    }
+
+    @Test
+    fun testMigration4To5_addsClearHistoryColumn() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration-test-v4-to-v5.db"
+        context.deleteDatabase(dbName)
+
+        val helperConfig = androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(dbName)
+            .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(4) {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `transfers` (
+                            `id` TEXT NOT NULL,
+                            `type` TEXT NOT NULL,
+                            `repoOwner` TEXT NOT NULL,
+                            `repoName` TEXT NOT NULL,
+                            `branch` TEXT NOT NULL,
+                            `sourcePath` TEXT NOT NULL,
+                            `destPath` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `totalFiles` INTEGER NOT NULL,
+                            `processedFiles` INTEGER NOT NULL,
+                            `totalBytes` INTEGER NOT NULL,
+                            `processedBytes` INTEGER NOT NULL,
+                            `currentFile` TEXT,
+                            `commitSha` TEXT,
+                            `commitMessage` TEXT,
+                            `isWipe` INTEGER NOT NULL,
+                            `wipeMode` TEXT NOT NULL,
+                            `reviewedHeadSha` TEXT,
+                            `overwritePolicy` TEXT NOT NULL,
+                            `preserveStructure` INTEGER NOT NULL,
+                            `createRepoFolder` INTEGER NOT NULL,
+                            `asZip` INTEGER NOT NULL,
+                            `downloadScope` TEXT NOT NULL,
+                            `remotePath` TEXT NOT NULL,
+                            `destinationUri` TEXT NOT NULL,
+                            `selectedPathsJson` TEXT,
+                            `errorMessage` TEXT,
+                            `retryCount` INTEGER NOT NULL,
+                            `createdAt` INTEGER NOT NULL,
+                            `completedAt` INTEGER,
+                            PRIMARY KEY(`id`)
+                        )
+                    """.trimIndent())
+                }
+
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+            })
+            .build()
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(helperConfig)
+        val db = openHelper.writableDatabase
+
+        // Insert record under schema v4 (no clearHistory column)
+        db.execSQL("""
+            INSERT INTO transfers (
+                id, type, repoOwner, repoName, branch, sourcePath, destPath,
+                status, totalFiles, processedFiles, totalBytes, processedBytes,
+                currentFile, commitSha, commitMessage, isWipe, wipeMode,
+                reviewedHeadSha, overwritePolicy, preserveStructure, createRepoFolder,
+                asZip, downloadScope, remotePath, destinationUri, selectedPathsJson,
+                retryCount, createdAt
+            ) VALUES (
+                'upload-transfer-v4', 'UPLOAD', 'octocat', 'Hello-World', 'main', '/local', 'dest',
+                'QUEUED', 2, 0, 2048, 0,
+                NULL, NULL, 'commit msg', 0, 'NONE',
+                'sha123', 'OVERWRITE', 1, 0,
+                0, 'REPOSITORY', '', '', NULL,
+                0, 1710000000000
+            )
+        """.trimIndent())
+
+        // Apply MIGRATION_4_5
+        AppDatabase.MIGRATION_4_5.migrate(db)
+
+        val cursor = db.query("SELECT id, type, wipeMode, clearHistory FROM transfers WHERE id = 'upload-transfer-v4'")
+        assertTrue(cursor.moveToFirst())
+        assertEquals("upload-transfer-v4", cursor.getString(cursor.getColumnIndexOrThrow("id")))
+        assertEquals("NONE", cursor.getString(cursor.getColumnIndexOrThrow("wipeMode")))
+        assertEquals("clearHistory should default to 0 (false) after migration", 0, cursor.getInt(cursor.getColumnIndexOrThrow("clearHistory")))
+        cursor.close()
+
+        // Test updating clearHistory to 1 (true)
+        db.execSQL("UPDATE transfers SET clearHistory = 1, wipeMode = 'FULL_BRANCH' WHERE id = 'upload-transfer-v4'")
+        val updatedCursor = db.query("SELECT clearHistory, wipeMode FROM transfers WHERE id = 'upload-transfer-v4'")
+        assertTrue(updatedCursor.moveToFirst())
+        assertEquals(1, updatedCursor.getInt(0))
+        assertEquals("FULL_BRANCH", updatedCursor.getString(1))
+        updatedCursor.close()
+
+        openHelper.close()
+    }
 }

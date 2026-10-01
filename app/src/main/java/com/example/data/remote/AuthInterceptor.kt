@@ -1,12 +1,33 @@
 package com.example.data.remote
 
 import com.example.data.local.SecureStorage
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
 
-class AuthInterceptor(private val secureStorage: SecureStorage) : Interceptor {
+class AuthInterceptor(
+    private val secureStorage: SecureStorage,
+    private val customBaseUrl: String? = null
+) : Interceptor {
+
+    private val allowedCustomHost: String? = customBaseUrl?.toHttpUrlOrNull()?.host
+
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
+        val host = original.url.host
+
+        // Security Guard: Never attach credentials or API headers to raw-content host or any external/unintended host
+        val isRawContentHost = host.equals("raw.githubusercontent.com", ignoreCase = true) ||
+                host.endsWith(".githubusercontent.com", ignoreCase = true)
+
+        val isGitHubApiHost = host.equals("api.github.com", ignoreCase = true) ||
+                (allowedCustomHost != null && host.equals(allowedCustomHost, ignoreCase = true))
+
+        if (isRawContentHost || !isGitHubApiHost) {
+            // Credentials and GitHub API headers must ONLY be sent to authorized API endpoints
+            return chain.proceed(original)
+        }
+
         val builder = original.newBuilder()
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")

@@ -194,3 +194,19 @@ data class DeviceTokenResponse(
     @Json(name = "error") val error: String? = null,
     @Json(name = "error_description") val errorDescription: String? = null
 )
+
+@JsonClass(generateAdapter = true)
+data class CreateRefRequest(
+    @Json(name = "ref") val ref: String,
+    @Json(name = "sha") val sha: String
+)
+
+@JsonClass(generateAdapter = true)
+data class RenameBranchRequest(
+    @Json(name = "new_name") val newName: String
+)
+
+@JsonClass(generateAdapter = true)
+data class UpdateRepoRequest(
+    @Json(name = "default_branch") val defaultBranch: String? = null
+)

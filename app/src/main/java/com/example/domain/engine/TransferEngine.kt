@@ -22,6 +22,7 @@ import com.example.domain.worker.TransferWorker
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -190,7 +191,9 @@ class TransferEngine(
         branch: String,
         destinationDir: String,
         files: List<FileScanItem>,
-        isWipe: Boolean
+        isWipe: Boolean,
+        wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE,
+        clearHistory: Boolean = false
     ): PreflightReport = withContext(Dispatchers.IO) {
         val checks = mutableListOf<PreflightCheckItem>()
         var warnings = 0
@@ -266,13 +269,35 @@ class TransferEngine(
         }
 
         // D. Wipe-Before-Upload Warning
-        if (isWipe) {
+        if (isWipe || wipeMode != WipeMode.NONE) {
             warnings++
+            val wipeDetail = when (wipeMode) {
+                WipeMode.FULL_BRANCH -> "Wipe Branch: All existing remote files on branch '$branch' not present in this upload will be permanently deleted."
+                WipeMode.DESTINATION, WipeMode.SELECTED_FOLDER -> {
+                    val norm = normalizeDestination(destinationDir)
+                    val folderDesc = if (norm.isEmpty()) "root folder (/)" else "'/$norm/'"
+                    "Selected Folder Wipe: All existing remote files inside $folderDesc not present in this upload will be permanently deleted."
+                }
+                WipeMode.CHANGED_FOLDERS -> "Changed Folders Wipe: Existing remote files in folders modified by this upload will be permanently deleted."
+                WipeMode.NONE -> "All remote files in the branch not present in the local upload will be deleted."
+            }
             checks.add(
                 PreflightCheckItem(
                     title = "Destructive Wipe-Before-Upload Enabled",
                     level = CheckLevel.WARN,
-                    detail = "All remote files in the branch not present in the local upload will be deleted."
+                    detail = wipeDetail
+                )
+            )
+        }
+
+        // D2. History Clear Warning
+        if (clearHistory) {
+            warnings++
+            checks.add(
+                PreflightCheckItem(
+                    title = "High-Risk Git History Clear Enabled",
+                    level = CheckLevel.WARN,
+                    detail = "This upload will rewrite branch history and create an isolated orphan root commit with NO parent commits. All prior commit history on '$branch' will be disconnected."
                 )
             )
         }
@@ -420,7 +445,7 @@ class TransferEngine(
                     )
                 }
             }
-        } else if (wipeMode == WipeMode.DESTINATION) {
+        } else if (wipeMode == WipeMode.DESTINATION || wipeMode == WipeMode.SELECTED_FOLDER) {
             val prefix = if (normalizedDest.isEmpty()) "" else "$normalizedDest/"
             for ((remPath, remItem) in remoteMap) {
                 if (remPath.startsWith(prefix) && !handledRemotePaths.contains(remPath)) {
@@ -431,9 +456,37 @@ class TransferEngine(
                             remotePath = remPath,
                             changeType = DiffChangeType.DELETED,
                             sizeBytes = remItem.size,
-                            reason = "Removed by destination-folder wipe"
+                            reason = "Removed by selected-folder wipe"
                         )
                     )
+                }
+            }
+        } else if (wipeMode == WipeMode.CHANGED_FOLDERS) {
+            val touchedFolders = handledRemotePaths.map { p ->
+                if (p.contains('/')) p.substringBeforeLast('/') else ""
+            }.toSet()
+            for ((remPath, remItem) in remoteMap) {
+                if (!handledRemotePaths.contains(remPath)) {
+                    val isInsideTouched = touchedFolders.any { folder ->
+                        if (folder.isEmpty()) {
+                            !remPath.contains('/')
+                        } else {
+                            remPath == folder || remPath.startsWith("$folder/")
+                        }
+                    }
+                    if (isInsideTouched) {
+                        deleted++
+                        val remFolder = if (remPath.contains('/')) remPath.substringBeforeLast('/') else "root"
+                        diffItems.add(
+                            DiffItem(
+                                localPath = "",
+                                remotePath = remPath,
+                                changeType = DiffChangeType.DELETED,
+                                sizeBytes = remItem.size,
+                                reason = "Removed by changed-folder wipe in '$remFolder'"
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -461,6 +514,7 @@ class TransferEngine(
         commitMessage: String,
         isWipe: Boolean,
         wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE,
+        clearHistory: Boolean = false,
         reviewedHeadSha: String? = null,
         onCreated: (String) -> Unit
     ): String {
@@ -484,6 +538,7 @@ class TransferEngine(
             commitMessage = commitMessage,
             isWipe = isWipe || wipeMode != WipeMode.NONE,
             wipeMode = wipeMode.name,
+            clearHistory = clearHistory,
             reviewedHeadSha = reviewedHeadSha,
             createdAt = System.currentTimeMillis()
         )
@@ -514,11 +569,12 @@ class TransferEngine(
                     .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
                     .addTag("transfer_$transferId")
                     .build()
-                WorkManager.getInstance(context).enqueueUniqueWork(
+                val op = WorkManager.getInstance(context).enqueueUniqueWork(
                     "transfer_$transferId",
                     ExistingWorkPolicy.KEEP,
                     request
                 )
+                op.result.get()
 
                 withContext(Dispatchers.Main) {
                     onCreated(transferId)
@@ -610,7 +666,7 @@ class TransferEngine(
             }
 
             val wipeMode = try {
-                WipeMode.valueOf(entity.wipeMode)
+                WipeMode.fromString(entity.wipeMode)
             } catch (_: Exception) {
                 if (entity.isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE
             }
@@ -782,15 +838,15 @@ class TransferEngine(
 
             // CRITICAL TRANSACTION BOUNDARY: Verify all items succeeded!
             val updatedItems = transferRepository.getItemsForTransferSync(transferId)
-            val failedItems = updatedItems.filter { it.status == "FAILED" }
-            if (failedItems.isNotEmpty()) {
-                val summary = "${failedItems.size} of ${updatedItems.size} files failed to upload. Branch was not modified. Click Retry Failed Files to re-attempt."
+            val nonSuccessful = updatedItems.filter { it.status != "SUCCESS" && it.status != "SKIPPED" }
+            if (nonSuccessful.isNotEmpty()) {
+                val summary = "${nonSuccessful.size} of ${updatedItems.size} files failed or incomplete. Branch was not modified. Click Retry Failed Files to re-attempt."
                 failTransfer(entity.copy(processedFiles = processedFiles, processedBytes = processedBytes), summary)
                 return@withContext
             }
 
-            // If WipeMode.DESTINATION: mark unhandled remote files under destination directory for deletion
-            if (wipeMode == WipeMode.DESTINATION) {
+            // If WipeMode.SELECTED_FOLDER / DESTINATION: mark unhandled remote files under destination directory for deletion
+            if (wipeMode == WipeMode.DESTINATION || wipeMode == WipeMode.SELECTED_FOLDER) {
                 val normDest = normalizeDestination(entity.destPath)
                 val prefix = if (normDest.isEmpty()) "" else "$normDest/"
                 for ((remPath, remItem) in remoteMap) {
@@ -803,6 +859,31 @@ class TransferEngine(
                                 sha = null // null sha explicitly deletes entry in Git Tree API
                             )
                         )
+                    }
+                }
+            } else if (wipeMode == WipeMode.CHANGED_FOLDERS) {
+                val touchedFolders = handledPaths.map { p ->
+                    if (p.contains('/')) p.substringBeforeLast('/') else ""
+                }.toSet()
+                for ((remPath, remItem) in remoteMap) {
+                    if (!handledPaths.contains(remPath)) {
+                        val isInsideTouched = touchedFolders.any { folder ->
+                            if (folder.isEmpty()) {
+                                !remPath.contains('/')
+                            } else {
+                                remPath == folder || remPath.startsWith("$folder/")
+                            }
+                        }
+                        if (isInsideTouched) {
+                            treeEntries.add(
+                                CreateTreeEntryDto(
+                                    path = remPath,
+                                    mode = remItem.mode ?: "100644",
+                                    type = "blob",
+                                    sha = null
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -829,12 +910,18 @@ class TransferEngine(
             val newTreeSha = newTreeRes.getOrThrow()
 
             // Create Git commit
+            // If clearHistory is true: orphan root commit (no parent commits)
+            // If clearHistory is false: normal commit with headCommitSha parent
+            val parentSha = if (entity.clearHistory) null else headCommitSha
+            val parentsList = if (entity.clearHistory) emptyList<String>() else listOf(headCommitSha)
+
             val newCommitRes = gitHubRepository.createCommit(
                 owner = entity.repoOwner,
                 repo = entity.repoName,
                 message = entity.commitMessage ?: "Commit via GitHub File Manager",
                 treeSha = newTreeSha,
-                parentCommitSha = headCommitSha
+                parentCommitSha = parentSha,
+                parents = parentsList
             )
             if (newCommitRes.isFailure) {
                 failTransfer(entity, "Failed to create commit: ${newCommitRes.exceptionOrNull()?.message}")
@@ -855,13 +942,16 @@ class TransferEngine(
             }
 
             // STEP 4: VERIFYING & UPDATING REF
+            // CRITICAL SAFETY GUARD:
+            // force is strictly true ONLY when clearHistory is explicitly set.
+            // For normal uploads, force is ALWAYS false to prevent accidental history rewriting.
             updateTransferStatus(entity.copy(status = TransferStatus.VERIFYING.name))
             val updateRefRes = gitHubRepository.updateBranchRef(
                 owner = entity.repoOwner,
                 repo = entity.repoName,
                 branch = entity.branch,
                 commitSha = newCommitSha,
-                force = false
+                force = entity.clearHistory
             )
             if (updateRefRes.isFailure) {
                 val ex = updateRefRes.exceptionOrNull()
@@ -960,7 +1050,7 @@ class TransferEngine(
                     .build()
                 WorkManager.getInstance(context).enqueueUniqueWork(
                     "transfer_$transferId",
-                    ExistingWorkPolicy.KEEP,
+                    ExistingWorkPolicy.REPLACE,
                     request
                 )
             } catch (_: Exception) {}
@@ -1010,6 +1100,10 @@ class TransferEngine(
             else -> remotePath
         }
 
+        val selectedPathsJson = if (config.selectedPaths.isNotEmpty()) {
+            JSONArray(config.selectedPaths).toString()
+        } else null
+
         val entity = TransferEntity(
             id = transferId,
             type = TransferType.DOWNLOAD.name,
@@ -1018,6 +1112,9 @@ class TransferEngine(
             branch = branch,
             sourcePath = sourceDescription,
             destPath = config.destinationTreeUri.toString(),
+            destinationUri = config.destinationTreeUri.toString(),
+            remotePath = remotePath,
+            selectedPathsJson = selectedPathsJson,
             status = TransferStatus.QUEUED.name,
             totalFiles = 1,
             processedFiles = 0,
@@ -1040,11 +1137,12 @@ class TransferEngine(
                     .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
                     .addTag("transfer_$transferId")
                     .build()
-                WorkManager.getInstance(context).enqueueUniqueWork(
+                val op = WorkManager.getInstance(context).enqueueUniqueWork(
                     "transfer_$transferId",
                     ExistingWorkPolicy.KEEP,
                     request
                 )
+                op.result.get()
 
                 withContext(Dispatchers.Main) {
                     onCreated(transferId)
@@ -1138,9 +1236,11 @@ class TransferEngine(
                 return@withContext
             }
 
-            val remotePath = initialRemotePath ?: (if (entity.sourcePath.startsWith("Entire Repository")) "" else entity.sourcePath)
+            val remotePath = initialRemotePath
+                ?: (if (entity.remotePath.isNotEmpty()) entity.remotePath else if (entity.sourcePath.startsWith("Entire Repository")) "" else entity.sourcePath)
             val isZip = initialConfig?.asZip ?: entity.asZip
             val policy = initialConfig?.overwritePolicy ?: try { OverwritePolicy.valueOf(entity.overwritePolicy) } catch (_: Exception) { OverwritePolicy.OVERWRITE }
+            val explicitSelectedPaths = initialConfig?.selectedPaths ?: parseSelectedPathsJson(entity.selectedPathsJson)
 
             // Discover and populate items if not already present
             var existingItems = transferRepository.getItemsForTransferSync(transferId)
@@ -1189,8 +1289,14 @@ class TransferEngine(
                     }
 
                     if (matchedBlobs.isEmpty()) {
-                        // Fallback to directory contents API
-                        val contentsRes = gitHubRepository.getDirectoryContents(entity.repoOwner, entity.repoName, cleanRemote, entity.branch)
+                        // Fallback to directory contents API (strictly bypassing cache for transfer integrity)
+                        val contentsRes = gitHubRepository.getDirectoryContents(
+                            owner = entity.repoOwner,
+                            repo = entity.repoName,
+                            path = cleanRemote,
+                            branch = entity.branch,
+                            bypassCache = true
+                        )
                         if (contentsRes.isSuccess) {
                             val items = contentsRes.getOrThrow().filter { it.isFile }.map {
                                 TransferItemEntity(
@@ -1584,6 +1690,20 @@ class TransferEngine(
         val encodedBranch = branch.split('/').joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
         val encodedPath = path.trimStart('/').split('/').joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
         return "https://raw.githubusercontent.com/$owner/$repo/$encodedBranch/$encodedPath"
+    }
+
+    private fun parseSelectedPathsJson(jsonStr: String?): List<String> {
+        if (jsonStr.isNullOrBlank()) return emptyList()
+        return try {
+            val arr = JSONArray(jsonStr)
+            val res = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                res.add(arr.getString(i))
+            }
+            res
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun resolveUniqueFileName(parentDir: DocumentFile, originalName: String): String {

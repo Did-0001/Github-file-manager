@@ -30,7 +30,8 @@ import kotlinx.coroutines.launch
 
 enum class GitHubPickerMode {
     DIRECTORIES_ONLY, // Upload destination & Download folder scope (Root and folders selectable)
-    FILES_ONLY        // Download single file scope (Files selectable)
+    FILES_ONLY,        // Download single file scope (Files selectable)
+    SELECTED_ITEM      // Download selected-item flow (Any file or folder selectable)
 }
 
 @Composable
@@ -138,6 +139,7 @@ fun GitHubPathPickerContent(
         when (pickerMode) {
             GitHubPickerMode.DIRECTORIES_ONLY -> true // Can select root ("") or any valid folder
             GitHubPickerMode.FILES_ONLY -> selectedPath.isNotBlank()
+            GitHubPickerMode.SELECTED_ITEM -> selectedPath.isNotBlank()
         }
     }
 
@@ -161,7 +163,11 @@ fun GitHubPathPickerContent(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (pickerMode == GitHubPickerMode.DIRECTORIES_ONLY) "Browse GitHub Destination" else "Browse Remote GitHub File",
+                            text = when (pickerMode) {
+                                GitHubPickerMode.DIRECTORIES_ONLY -> "Browse GitHub Destination"
+                                GitHubPickerMode.FILES_ONLY -> "Browse Remote GitHub File"
+                                GitHubPickerMode.SELECTED_ITEM -> "Select GitHub Item"
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -283,7 +289,7 @@ fun GitHubPathPickerContent(
                             modifier = Modifier.weight(1f).testTag("path_picker_selected_path_text")
                         )
 
-                        if (pickerMode == GitHubPickerMode.DIRECTORIES_ONLY && currentPath != selectedPath) {
+                        if ((pickerMode == GitHubPickerMode.DIRECTORIES_ONLY || pickerMode == GitHubPickerMode.SELECTED_ITEM) && currentPath != selectedPath) {
                             TextButton(
                                 onClick = { selectedPath = currentPath },
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
@@ -378,10 +384,10 @@ fun GitHubPathPickerContent(
                                                 if (isDirectory) {
                                                     // Navigate into directory
                                                     currentPath = item.path
-                                                    if (pickerMode == GitHubPickerMode.DIRECTORIES_ONLY) {
+                                                    if (pickerMode == GitHubPickerMode.DIRECTORIES_ONLY || pickerMode == GitHubPickerMode.SELECTED_ITEM) {
                                                         selectedPath = item.path
                                                     }
-                                                } else if (pickerMode == GitHubPickerMode.FILES_ONLY) {
+                                                } else if (pickerMode == GitHubPickerMode.FILES_ONLY || pickerMode == GitHubPickerMode.SELECTED_ITEM) {
                                                     // Select file
                                                     selectedPath = item.path
                                                 }
@@ -422,7 +428,7 @@ fun GitHubPathPickerContent(
                                         }
 
                                         if (isDirectory) {
-                                            if (pickerMode == GitHubPickerMode.DIRECTORIES_ONLY) {
+                                            if (pickerMode == GitHubPickerMode.DIRECTORIES_ONLY || pickerMode == GitHubPickerMode.SELECTED_ITEM) {
                                                 // Quick select button without navigating into it
                                                 IconButton(
                                                     onClick = { selectedPath = item.path },
@@ -442,7 +448,7 @@ fun GitHubPathPickerContent(
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                                 modifier = Modifier.size(18.dp)
                                             )
-                                        } else if (pickerMode == GitHubPickerMode.FILES_ONLY) {
+                                        } else if (pickerMode == GitHubPickerMode.FILES_ONLY || pickerMode == GitHubPickerMode.SELECTED_ITEM) {
                                             Icon(
                                                 imageVector = if (isItemCurrentSelection) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
                                                 contentDescription = "Select this file",

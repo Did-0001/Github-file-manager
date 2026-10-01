@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.cache.*
 import com.example.data.local.AppDatabase
 import com.example.data.local.SecureStorage
 import com.example.data.local.SelectedRepoInfo
@@ -24,10 +25,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val secureStorage = SecureStorage(application)
     private val apiClient = ApiClient(secureStorage)
     private val authRepository = AuthRepository(apiClient, secureStorage)
-    private val gitHubRepository = GitHubRepository(apiClient)
     private val database = AppDatabase.getInstance(application)
+    val cacheManager = GitHubCacheManager(application, database.repoDao())
+    val gitHubRepository = GitHubRepository(apiClient, cacheManager)
     private val transferRepository = TransferRepository(database)
     val transferEngine = TransferEngine(application, gitHubRepository, transferRepository)
+
+    val cacheStats: StateFlow<CacheStats> = cacheManager.statsFlow
+
+    fun setCacheExpirationPolicy(policy: CacheExpirationPolicy) {
+        cacheManager.setPolicy(policy)
+    }
+
+    fun clearCache() {
+        cacheManager.clearAllCache()
+    }
 
     // Auth State
     private val _isAuthenticated = MutableStateFlow(secureStorage.hasToken())
@@ -90,12 +102,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _preflightReport = MutableStateFlow<PreflightReport?>(null)
     val preflightReport: StateFlow<PreflightReport?> = _preflightReport.asStateFlow()
 
+    // Branches for current repo
+    private val _branches = MutableStateFlow<List<GitHubBranchDto>>(emptyList())
+    val branches: StateFlow<List<GitHubBranchDto>> = _branches.asStateFlow()
+
+    private val _isLoadingBranches = MutableStateFlow(false)
+    val isLoadingBranches: StateFlow<Boolean> = _isLoadingBranches.asStateFlow()
+
     init {
         if (_isAuthenticated.value) {
             refreshUserProfile()
             loadUserRepos()
         }
         refreshContents()
+        loadBranchesForCurrentRepo()
     }
 
     // AUTH METHODS
@@ -156,6 +176,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         authRepository.logout()
+        cacheManager.clearAllCache()
         _isAuthenticated.value = false
         _authUser.value = null
         _selectedRepo.value = null
@@ -164,10 +185,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // REPOSITORY METHODS
-    fun loadUserRepos() {
+    fun loadUserRepos(bypassCache: Boolean = false) {
         viewModelScope.launch {
             _isLoadingRepos.value = true
-            val res = gitHubRepository.getAllUserRepos()
+            val res = gitHubRepository.getAllUserRepos(bypassCache = bypassCache)
             if (res.isSuccess) {
                 _userRepos.value = res.getOrThrow()
                 // If no repo selected, select first
@@ -192,11 +213,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedRepo.value = info
         _currentBrowsePath.value = ""
         refreshContents()
+        loadBranchesForCurrentRepo()
     }
 
-    suspend fun fetchBranches(owner: String, repo: String): List<GitHubBranchDto> {
-        val res = gitHubRepository.getAllBranches(owner, repo)
+    fun loadBranchesForCurrentRepo(bypassCache: Boolean = false) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            _isLoadingBranches.value = true
+            val res = gitHubRepository.getAllBranches(repo.owner, repo.name, bypassCache = bypassCache)
+            if (res.isSuccess) {
+                _branches.value = res.getOrThrow()
+            }
+            _isLoadingBranches.value = false
+        }
+    }
+
+    suspend fun fetchBranches(owner: String, repo: String, bypassCache: Boolean = false): List<GitHubBranchDto> {
+        val res = gitHubRepository.getAllBranches(owner, repo, bypassCache = bypassCache)
         return res.getOrElse { emptyList() }
+    }
+
+    fun selectBranch(branch: String) {
+        val current = _selectedRepo.value ?: return
+        val updated = current.copy(branch = branch)
+        secureStorage.saveSelectedRepo(updated)
+        _selectedRepo.value = updated
+        _currentBrowsePath.value = ""
+        refreshContents()
+    }
+
+    fun createBranch(newBranchName: String, sourceBranch: String, callback: (Boolean, String?) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            val headRes = gitHubRepository.getBranchHeadSha(repo.owner, repo.name, sourceBranch)
+            if (headRes.isFailure) {
+                callback(false, headRes.exceptionOrNull()?.message ?: "Failed to resolve source branch HEAD SHA")
+                return@launch
+            }
+            val sha = headRes.getOrThrow()
+            val createRes = gitHubRepository.createBranch(repo.owner, repo.name, newBranchName, sha)
+            if (createRes.isSuccess) {
+                selectBranch(newBranchName)
+                loadBranchesForCurrentRepo()
+                callback(true, null)
+            } else {
+                callback(false, createRes.exceptionOrNull()?.message)
+            }
+        }
+    }
+
+    fun renameBranch(oldBranchName: String, newBranchName: String, callback: (Boolean, String?) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            val renameRes = gitHubRepository.renameBranch(repo.owner, repo.name, oldBranchName, newBranchName)
+            if (renameRes.isSuccess) {
+                if (repo.branch == oldBranchName) {
+                    selectBranch(newBranchName)
+                }
+                loadBranchesForCurrentRepo()
+                callback(true, null)
+            } else {
+                callback(false, renameRes.exceptionOrNull()?.message)
+            }
+        }
+    }
+
+    fun deleteBranch(branchName: String, callback: (Boolean, String?) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        if (branchName == repo.defaultBranch) {
+            callback(false, "Cannot delete the default branch ($branchName).")
+            return
+        }
+        viewModelScope.launch {
+            val deleteRes = gitHubRepository.deleteBranch(repo.owner, repo.name, branchName)
+            if (deleteRes.isSuccess) {
+                if (repo.branch == branchName) {
+                    selectBranch(repo.defaultBranch)
+                }
+                loadBranchesForCurrentRepo()
+                callback(true, null)
+            } else {
+                callback(false, deleteRes.exceptionOrNull()?.message)
+            }
+        }
+    }
+
+    fun setDefaultBranch(newDefaultBranch: String, callback: (Boolean, String?) -> Unit) {
+        val repo = _selectedRepo.value ?: return
+        viewModelScope.launch {
+            val res = gitHubRepository.setDefaultBranch(repo.owner, repo.name, newDefaultBranch)
+            if (res.isSuccess) {
+                val updatedInfo = repo.copy(defaultBranch = newDefaultBranch)
+                secureStorage.saveSelectedRepo(updatedInfo)
+                _selectedRepo.value = updatedInfo
+                loadBranchesForCurrentRepo()
+                callback(true, null)
+            } else {
+                callback(false, res.exceptionOrNull()?.message)
+            }
+        }
+    }
+
+    suspend fun getBranchDetails(branch: String): Result<GitHubBranchDto> {
+        val repo = _selectedRepo.value ?: return Result.failure(Exception("No repository selected"))
+        return gitHubRepository.getBranchDetails(repo.owner, repo.name, branch)
     }
 
     fun createRepo(name: String, description: String?, isPrivate: Boolean, callback: (Boolean, String?) -> Unit) {
@@ -219,7 +339,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshContents()
     }
 
-    fun refreshContents() {
+    fun refreshContents(bypassCache: Boolean = false) {
         val repo = _selectedRepo.value ?: return
         viewModelScope.launch {
             _isLoadingContents.value = true
@@ -228,7 +348,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 owner = repo.owner,
                 repo = repo.name,
                 path = _currentBrowsePath.value,
-                branch = repo.branch
+                branch = repo.branch,
+                bypassCache = bypassCache
             )
             if (res.isSuccess) {
                 _repoContents.value = res.getOrThrow()
@@ -243,9 +364,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         owner: String,
         repo: String,
         path: String,
-        branch: String
+        branch: String,
+        bypassCache: Boolean = false
     ): Result<List<GitHubContentDto>> {
-        return gitHubRepository.getDirectoryContents(owner, repo, path, branch)
+        return gitHubRepository.getDirectoryContents(owner, repo, path, branch, bypassCache = bypassCache)
     }
 
     fun createFile(fileName: String, content: String, commitMsg: String, callback: (Boolean, String?) -> Unit) {
@@ -388,7 +510,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runPreflightAndDiff(
         destinationDir: String,
         isWipe: Boolean,
-        wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE
+        wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE,
+        clearHistory: Boolean = false
     ) {
         val repo = _selectedRepo.value ?: return
         val files = _scannedFiles.value
@@ -404,7 +527,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 branch = repo.branch,
                 destinationDir = destinationDir,
                 files = files,
-                isWipe = isWipe || wipeMode != WipeMode.NONE
+                isWipe = isWipe || wipeMode != WipeMode.NONE,
+                wipeMode = wipeMode,
+                clearHistory = clearHistory
             )
             _preflightReport.value = preflight
 
@@ -429,6 +554,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         commitMessage: String,
         isWipe: Boolean,
         wipeMode: WipeMode = if (isWipe) WipeMode.FULL_BRANCH else WipeMode.NONE,
+        clearHistory: Boolean = false,
         onStarted: (String) -> Unit
     ) {
         val repo = _selectedRepo.value ?: return
@@ -444,6 +570,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             commitMessage = commitMessage,
             isWipe = isWipe || wipeMode != WipeMode.NONE,
             wipeMode = wipeMode,
+            clearHistory = clearHistory,
             reviewedHeadSha = _diffReport.value?.reviewedHeadSha,
             onCreated = onStarted
         )

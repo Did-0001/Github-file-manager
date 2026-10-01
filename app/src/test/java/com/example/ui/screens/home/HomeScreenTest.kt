@@ -171,11 +171,7 @@ class HomeScreenTest {
     }
 
     @Test
-    fun quickActions_invokeNavigationCallbacks() {
-        var uploadNavigated = false
-        var downloadNavigated = false
-        var repoNavigated = false
-
+    fun streamlinedHomeScreen_omitsRedundantQuickActions() {
         composeTestRule.setContent {
             MyApplicationTheme {
                 HomeScreen(
@@ -185,23 +181,20 @@ class HomeScreenTest {
                     recentTransfers = emptyList(),
                     onOpenAuth = {},
                     onOpenRepoSelector = {},
-                    onNavigateUpload = { uploadNavigated = true },
-                    onNavigateDownload = { downloadNavigated = true },
-                    onNavigateRepository = { repoNavigated = true },
                     onNavigateTransfers = {}
                 )
             }
         }
 
-        scrollToTag("quick_upload_card")
-        composeTestRule.onNodeWithTag("quick_upload_card").performClick()
-        assertTrue(uploadNavigated)
+        // Quick Actions cards must not exist on the streamlined HomeScreen
+        composeTestRule.onNodeWithTag("quick_upload_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("quick_download_card").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("quick_browser_card").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Quick Actions").assertDoesNotExist()
 
-        composeTestRule.onNodeWithTag("quick_download_card").performClick()
-        assertTrue(downloadNavigated)
-
-        composeTestRule.onNodeWithTag("quick_browser_card").performClick()
-        assertTrue(repoNavigated)
+        // Core cards remain cleanly visible
+        composeTestRule.onNodeWithTag("home_auth_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_repo_card").assertIsDisplayed()
     }
 
     @Test

@@ -209,12 +209,29 @@ fun DownloadScreen(
 
                     if (downloadScopeIndex == 3 && selectedPathsList.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "${selectedPathsList.size} item(s) selected for download:",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${selectedPathsList.size} item(s) selected for download:",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (onFetchDirectory != null) {
+                                TextButton(
+                                    onClick = { showPathPickerDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier.testTag("download_add_item_btn")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Add Item", fontSize = 12.sp)
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Column(
                             modifier = Modifier
@@ -476,20 +493,28 @@ fun DownloadScreen(
 
     // GitHub Path Picker Dialog
     if (showPathPickerDialog && onFetchDirectory != null) {
-        val pickerMode = if (downloadScopeIndex == 1) {
-            GitHubPickerMode.DIRECTORIES_ONLY
-        } else {
-            GitHubPickerMode.FILES_ONLY
+        val pickerMode = when (downloadScopeIndex) {
+            1 -> GitHubPickerMode.DIRECTORIES_ONLY
+            2 -> GitHubPickerMode.FILES_ONLY
+            3 -> GitHubPickerMode.SELECTED_ITEM
+            else -> GitHubPickerMode.DIRECTORIES_ONLY
         }
 
         GitHubPathPickerDialog(
             selectedRepo = selectedRepo,
-            initialPath = remotePathInput,
+            initialPath = if (downloadScopeIndex == 3) "" else remotePathInput,
             pickerMode = pickerMode,
             onFetchDirectory = onFetchDirectory,
             onDismiss = { showPathPickerDialog = false },
             onPathConfirmed = { chosenPath ->
-                remotePathInput = chosenPath
+                if (downloadScopeIndex == 3) {
+                    val clean = chosenPath.trim().trimStart('/').trimEnd('/')
+                    if (clean.isNotEmpty() && !selectedPathsList.contains(clean)) {
+                        selectedPathsList = selectedPathsList + clean
+                    }
+                } else {
+                    remotePathInput = chosenPath
+                }
                 showPathPickerDialog = false
             }
         )

@@ -69,8 +69,23 @@ data class DiffItem(
 
 enum class WipeMode {
     NONE,
-    DESTINATION,
-    FULL_BRANCH
+    SELECTED_FOLDER,
+    DESTINATION, // Backward compatible alias for SELECTED_FOLDER
+    CHANGED_FOLDERS,
+    FULL_BRANCH;
+
+    val isWipe: Boolean get() = this != NONE
+
+    companion object {
+        fun fromString(value: String?): WipeMode {
+            return when (value?.uppercase()) {
+                "SELECTED_FOLDER", "DESTINATION" -> SELECTED_FOLDER
+                "CHANGED_FOLDERS", "UPLOADED_FOLDERS" -> CHANGED_FOLDERS
+                "FULL_BRANCH" -> FULL_BRANCH
+                else -> NONE
+            }
+        }
+    }
 }
 
 data class DiffReport(

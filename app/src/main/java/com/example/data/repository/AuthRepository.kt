@@ -33,13 +33,24 @@ class AuthRepository(
         }
 
         // Temporarily store token to verify
-        secureStorage.saveToken(cleanToken, "PAT")
+        val tokenSaveRes = secureStorage.saveToken(cleanToken, "PAT")
+        if (tokenSaveRes.isFailure) {
+            val err = tokenSaveRes.exceptionOrNull()?.message ?: "Failed to encrypt and store token in KeyStore"
+            return Result.failure(IllegalStateException("Secure storage failure: $err"))
+        }
+
         return try {
             val response = apiClient.gitHubApi.getAuthenticatedUser()
             if (response.isSuccessful && response.body() != null) {
                 val user = response.body()!!
-                secureStorage.saveAuthUser(user.login, user.avatarUrl)
-                Result.success(user)
+                val userSaveRes = secureStorage.saveAuthUser(user.login, user.avatarUrl)
+                if (userSaveRes.isFailure) {
+                    val err = userSaveRes.exceptionOrNull()?.message ?: "Failed to persist user profile"
+                    secureStorage.clearAuth()
+                    Result.failure(IllegalStateException("Secure storage failure: $err"))
+                } else {
+                    Result.success(user)
+                }
             } else {
                 secureStorage.clearAuth()
                 val errorBody = response.errorBody()?.string()
@@ -77,14 +88,27 @@ class AuthRepository(
                 if (response.isSuccessful && response.body() != null) {
                     val body = response.body()!!
                     if (!body.accessToken.isNullOrBlank()) {
-                        secureStorage.saveToken(body.accessToken, "DEVICE")
+                        val tokenSaveRes = secureStorage.saveToken(body.accessToken, "DEVICE")
+                        if (tokenSaveRes.isFailure) {
+                            val err = tokenSaveRes.exceptionOrNull()?.message ?: "Failed to encrypt and store token"
+                            emit(DeviceFlowState.Error("Secure storage failure: $err"))
+                            break
+                        }
+
                         // Fetch authenticated user info
                         val userResponse = apiClient.gitHubApi.getAuthenticatedUser()
                         if (userResponse.isSuccessful && userResponse.body() != null) {
                             val user = userResponse.body()!!
-                            secureStorage.saveAuthUser(user.login, user.avatarUrl)
-                            emit(DeviceFlowState.Success(user))
+                            val userSaveRes = secureStorage.saveAuthUser(user.login, user.avatarUrl)
+                            if (userSaveRes.isFailure) {
+                                val err = userSaveRes.exceptionOrNull()?.message ?: "Failed to persist user profile"
+                                secureStorage.clearAuth()
+                                emit(DeviceFlowState.Error("Secure storage failure: $err"))
+                            } else {
+                                emit(DeviceFlowState.Success(user))
+                            }
                         } else {
+                            secureStorage.clearAuth()
                             emit(DeviceFlowState.Error("Token received but failed to fetch user profile"))
                         }
                         break

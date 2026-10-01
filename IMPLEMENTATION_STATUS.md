@@ -1,15 +1,207 @@
 # Current Checkpoint
 
 State: VERIFIED
-Phase: Phase 15 - AuthDialog Back Handling, Test Semantics, and Comprehensive UI Testing
-Action: Author comprehensive Robolectric UI test suite in AuthDialogTest.kt
-Intent: Create AuthDialogTest under Robolectric exercising PAT tab display, token input, visibility toggle, verify button gating, successful verification message, error verification message, tab switching to Device Flow, client id input, start device flow callback, user code display with copy/open buttons, and device flow cancellation.
-Files: /app/src/test/java/com/example/ui/screens/auth/AuthDialogTest.kt
-Last observed result: gradle :app:testDebugUnitTest --tests "com.example.ui.screens.auth.AuthDialogTest" passed (BUILD SUCCESSFUL in 35s, 8/8 tests passed).
-Verification: compile_applet succeeded cleanly and all 8 Robolectric UI tests passed.
-Next action: Phase 15 complete. Ready for next phase.
+Phase: Phase 6 - Authentication & UI Polish
+Action: Complete Phase 6 - Authentication & UI Polish with comprehensive test suite
+Intent: Implement automatic AuthDialog dismissal on successful PAT and Device Flow authentication, surface secure storage failures without credential leakage, guarantee AES-256-GCM hardware KeyStore token security with safe fallback, streamline HomeScreen by eliminating redundant Quick Actions in favor of the permanent bottom navigation bar tabs, and verify with comprehensive Robolectric tests.
+Files: /app/src/main/java/com/example/data/local/SecureStorage.kt, /app/src/main/java/com/example/data/repository/AuthRepository.kt, /app/src/main/java/com/example/ui/screens/auth/AuthDialog.kt, /app/src/main/java/com/example/ui/MainAppScreen.kt, /app/src/main/java/com/example/ui/screens/home/HomeScreen.kt, /app/src/test/java/com/example/ui/screens/home/HomeScreenTest.kt, /app/src/test/java/com/example/ui/screens/auth/AuthenticationAndUiPolishTest.kt
+Result: All 6 tests in AuthenticationAndUiPolishTest, all 8 tests in HomeScreenTest, all 8 tests in AuthDialogTest, and the full test suite (33 tasks) passed cleanly (BUILD SUCCESSFUL). Verified PAT/Device Flow dialog dismissal, KeyStore encryption roundtrip, secure storage failure surfacing and cleanup, and streamlined HomeScreen layout meeting Material 3 design and accessibility guidelines.
+Verification: compile_applet and gradle :app:testDebugUnitTest passed cleanly with zero errors.
+Next action: All planned roadmap phases in MASTER_PROMPT.md completed. Final verification and polish complete.
 
 # Action History
+
+- Date/Time: 2026-10-01T01:15:00-07:00
+  Phase: Phase 6 - Authentication & UI Polish
+  Action: Action 4 - Author comprehensive test suite in AuthenticationAndUiPolishTest.kt and run full verification
+  Files: /app/src/test/java/com/example/ui/screens/auth/AuthenticationAndUiPolishTest.kt
+  Result: Authored 6 unit and Robolectric tests in AuthenticationAndUiPolishTest covering PAT authentication success closing the dialog, DeviceFlowState.Success via LaunchedEffect closing the dialog, KeyStore AES-256-GCM encryption/decryption roundtrip and clean auth purge, corrupted storage recovery without crashing, network 401 handling with auth clearance, and streamlined HomeScreen verification ensuring Quick Actions are omitted.
+  Verification: Targeted test suite and compile_applet passed cleanly (BUILD SUCCESSFUL).
+
+- Date/Time: 2026-10-01T01:11:40-07:00
+  Phase: Phase 6 - Authentication & UI Polish
+  Action: Action 3 - Streamline HomeScreen by removing redundant Quick Actions cards
+  Files: /app/src/main/java/com/example/ui/screens/home/HomeScreen.kt, /app/src/test/java/com/example/ui/screens/home/HomeScreenTest.kt
+  Result: Removed redundant Quick Actions cards from HomeScreen, streamlining the layout into a clean, un-cluttered presentation with account banner, active repository card, recent transfers, and rate limit info. Navigation is handled coherently by the bottom navigation bar. Verified all 8 tests in HomeScreenTest passed cleanly.
+  Verification: compile_applet and gradle :app:testDebugUnitTest --tests "com.example.ui.screens.home.HomeScreenTest" passed cleanly (BUILD SUCCESSFUL).
+
+- Date/Time: 2026-10-01T01:09:00-07:00
+  Phase: Phase 6 - Authentication & UI Polish
+  Action: Action 2 - Ensure successful authentication closes the AuthDialog for both PAT and Device Flow
+  Files: /app/src/main/java/com/example/ui/screens/auth/AuthDialog.kt, /app/src/main/java/com/example/ui/MainAppScreen.kt
+  Result: AuthDialog and MainAppScreen now immediately close the dialog upon successful PAT authentication (via onDismiss and showAuthDialog = false) and upon DeviceFlowState.Success (via LaunchedEffect). All 8 AuthDialog tests pass cleanly.
+  Verification: compile_applet and gradle :app:testDebugUnitTest --tests "com.example.ui.screens.auth.AuthDialogTest" passed cleanly (BUILD SUCCESSFUL).
+
+- Date/Time: 2026-10-01T01:06:50-07:00
+  Phase: Phase 6 - Authentication & UI Polish
+  Action: Action 1 - Enhance SecureStorage and AuthRepository to surface storage failures and prevent credential leaks
+  Files: /app/src/main/java/com/example/data/local/SecureStorage.kt, /app/src/main/java/com/example/data/repository/AuthRepository.kt
+  Result: SecureStorage now returns Result<Unit> with commit() verification, ensuring storage and encryption errors are captured. AuthRepository propagates secure storage failures with clear actionable messages, clears auth on failure, and avoids credential leaks or logging. All existing 8 AuthDialog tests pass cleanly.
+  Verification: compile_applet and gradle :app:testDebugUnitTest --tests "com.example.ui.screens.auth.*" passed cleanly (BUILD SUCCESSFUL).
+
+# Action History
+
+- Date/Time: 2026-10-01T01:03:00-07:00
+  Phase: Phase 5 - Cache Architecture
+  Action: Action 4 - Author comprehensive test suite in GitHubCacheArchitectureTest.kt and run full verification
+  Files: /app/src/test/java/com/example/data/cache/GitHubCacheArchitectureTest.kt
+  Result: Authored 6 unit and Robolectric tests in GitHubCacheArchitectureTest covering cache hits avoiding duplicate network requests, refresh bypass forcing fresh network calls and updating cache, branch mutation invalidating cached branch metadata, directory and bounded file content caching with full clearAllCache purge, isolation ensuring destructive preflight and folder download bypass cache, and SettingsScreen cache architecture card, policy chips, real-time stats display, stale data notice, and clear cache confirmation dialog.
+  Verification: Targeted test suite and compile_applet passed cleanly (BUILD SUCCESSFUL).
+
+- Date/Time: 2026-09-30T10:42:50-07:00
+  Phase: Phase 5 - Cache Architecture
+  Action: Action 3 - Expose cache policy selection, stats, clear cache action with stale data & private storage warning in SettingsScreen and MainViewModel, and purge on sign-out
+  Files: /app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt, /app/src/main/java/com/example/ui/screens/settings/SettingsScreen.kt, /app/src/main/java/com/example/ui/MainAppScreen.kt
+  Result: Implemented Cache Architecture card in SettingsScreen with TTL options, real-time stats display, clear cache confirmation modal, and explicit stale data/private storage warnings. Wired automated cache purge on sign-out and refresh bypass across screens.
+  Verification: compile_applet passed cleanly.
+
+- Date/Time: 2026-09-30T10:42:50-07:00
+  Phase: Phase 5 - Cache Architecture
+  Action: Action 3 - Expose cache policy selection, stats, clear cache action with stale data & private storage warning in SettingsScreen and MainViewModel, and purge on sign-out
+  Files: /app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt, /app/src/main/java/com/example/ui/screens/settings/SettingsScreen.kt, /app/src/main/java/com/example/ui/MainAppScreen.kt
+  Result: Implemented Cache Architecture card in SettingsScreen with TTL options, real-time stats display, clear cache confirmation modal, and explicit stale data/private storage warnings. Wired automated cache purge on sign-out and refresh bypass across screens.
+  Verification: compile_applet passed cleanly.
+
+- Date/Time: 2026-09-30T10:38:40-07:00
+  Phase: Phase 5 - Cache Architecture
+  Action: Action 2 - Integrate GitHubCacheManager into GitHubRepository and TransferEngine with explicit bypass flags
+  Files: /app/src/main/java/com/example/data/repository/GitHubRepository.kt, /app/src/main/java/com/example/domain/engine/TransferEngine.kt
+  Result: Connected GitHubCacheManager to GitHubRepository for all metadata and file content queries with configurable bypass. Wired cache invalidation on branch create/rename/delete and file create/delete. Enforced bypassCache = true in TransferEngine.
+  Verification: compile_applet passed cleanly.
+
+- Date/Time: 2026-09-30T10:35:40-07:00
+  Phase: Phase 5 - Cache Architecture
+  Action: Action 1 - Create GitHubCacheManager with metadata and bounded content caches, expiration policies, and targeted unit tests
+  Files: /app/src/main/java/com/example/data/cache/GitHubCacheManager.kt, /app/src/test/java/com/example/data/cache/GitHubCacheManagerTest.kt
+  Result: Created GitHubCacheManager with thread-safe ConcurrentHashMap metadata caches, pure Kotlin bounded LRU file content cache, configurable expiration policies, refresh bypass, and complete data purge. Verified 6/6 unit tests passed.
+  Verification: Targeted test passed cleanly with BUILD SUCCESSFUL.
+
+- Date/Time: 2026-09-30T10:25:00-07:00
+  Phase: Phase 4 - Wipe modes and history clear
+  Action: Action 4 - Author comprehensive test suite in WipeAndHistoryClearTest.kt and run full verification
+  Files: /app/src/test/java/com/example/domain/engine/WipeAndHistoryClearTest.kt
+  Result: Authored 10 unit and Robolectric tests in WipeAndHistoryClearTest covering wipe modes preflight and diff calculations (NONE, SELECTED_FOLDER, CHANGED_FOLDERS, FULL_BRANCH), folder wipe, changed folders wipe, branch wipe execution paths, history clear safety guards and orphan root commit creation (empty parents list and forced ref update), non-destructive normal upload verification ensuring parent commit is preserved and force update is false, WipeConfirmationDialog acknowledgment gating, and HistoryClearConfirmationDialog high-risk confirmation and execution flow.
+  Verification: Targeted test suite and full suite gradle :app:testDebugUnitTest (33 tasks) passed cleanly (BUILD SUCCESSFUL). compile_applet passed cleanly.
+
+# Action History
+
+- Date/Time: 2026-09-30T10:19:00-07:00
+  Phase: Phase 4 - Wipe modes and history clear
+  Action: Action 3 - Update UploadScreen and MainAppScreen UI for wipe modes selectors, preflight diff display, explicit confirmation dialog, and history clear controls
+  Files: /app/src/main/java/com/example/ui/screens/upload/UploadScreen.kt, /app/src/main/java/com/example/ui/MainAppScreen.kt
+  Result: Implemented UI selectors for all four wipe modes (No wipe, Wipe selected folder, Wipe changed/uploaded folders, Wipe entire branch) with destructive preflight diff calculation and display. Updated WipeConfirmationDialog to require explicit acknowledgment for all destructive modes. Implemented separate "Also clear Git history" option below normal wipe with HistoryClearConfirmationDialog requiring explicit high-risk confirmation. Wired clearHistory through MainAppScreen and UploadScreen.
+  Verification: compile_applet passed cleanly with zero errors.
+
+# Action History
+
+- Date/Time: 2026-09-30T10:15:00-07:00
+  Phase: Phase 4 - Wipe modes and history clear
+  Action: Action 2 - Implement CHANGED_FOLDERS wipe mode and history clear in GitHubRepository, TransferEngine, and MainViewModel
+  Files: /app/src/main/java/com/example/data/repository/GitHubRepository.kt, /app/src/main/java/com/example/domain/engine/TransferEngine.kt, /app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt
+  Result: Implemented CHANGED_FOLDERS and SELECTED_FOLDER in calculateDiff and executeUploadJob in TransferEngine. Added clearHistory warning to runPreflight. Enabled orphan root commit creation via empty parents list in GitHubRepository.createCommit. Strictly enforced force = entity.clearHistory in updateBranchRef so ordinary uploads can never rewrite history. Wired clearHistory through MainViewModel.
+  Verification: compile_applet passed cleanly with zero errors.
+
+# Action History
+
+- Date/Time: 2026-09-29T14:14:00-07:00
+  Phase: Phase 4 - Wipe modes and history clear
+  Action: Action 1 - Update WipeMode enum, add clearHistory to TransferEntity, and implement Room Migration 4 to 5
+  Files: /app/src/main/java/com/example/domain/model/TransferModels.kt, /app/src/main/java/com/example/data/local/entity/TransferEntity.kt, /app/src/main/java/com/example/data/local/AppDatabase.kt, /app/src/test/java/com/example/data/local/TransferPersistenceMigrationTest.kt, /app/src/main/java/com/example/ui/screens/upload/UploadScreen.kt
+  Result: Added SELECTED_FOLDER, CHANGED_FOLDERS, and helpers to WipeMode. Added clearHistory to TransferEntity and implemented MIGRATION_4_5 in AppDatabase (version 5). Added and passed testMigration4To5_addsClearHistoryColumn in TransferPersistenceMigrationTest.
+  Verification: Targeted test passed cleanly with BUILD SUCCESSFUL.
+
+# Action History
+
+- Date/Time: 2026-09-29T14:05:00-07:00
+  Phase: Phase 3 - Repository Branch Management
+  Action: Create BranchManagementTest covering create, duplicate, invalid name, permission failure, rename, delete, default/protected restrictions, and refresh
+  Files: /app/src/test/java/com/example/ui/screens/repository/BranchManagementTest.kt, /app/src/test/java/com/example/ui/screens/repository/RepoBrowserScreenTest.kt
+  Result: Authored 14 unit and Robolectric tests in BranchManagementTest covering branch validation rules (valid names, blank names, duplicate check, invalid characters/sequences), UI dialog rendering with badges (CURRENT, DEFAULT, PROTECTED), HEAD SHA snippet, refresh, create branch modal with source branch selection, duplicate and invalid name inline validation errors, delete branch default protection, non-default delete confirmation, rename branch modal, permission failure message banner, and RepoBrowserScreen branch selector chip and overflow menu invocation ('⋮ -> Branch management').
+  Verification: Targeted BranchManagementTest and full test suite (196 tests) passed cleanly (BUILD SUCCESSFUL). compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T13:54:50-07:00
+  Phase: Phase 3 - Repository Branch Management
+  Action: Add loadBranchesForCurrentRepo in MainViewModel and wire BranchManagementDialog into RepoBrowserScreen and MainAppScreen
+  Files: /app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt, /app/src/main/java/com/example/ui/screens/repository/RepoBrowserScreen.kt, /app/src/main/java/com/example/ui/MainAppScreen.kt
+  Result: Implemented loadBranchesForCurrentRepo in MainViewModel and called it on repo selection and branch mutations. Replaced static branch label in RepoBrowserScreen with an interactive branch selector chip ('browser_branch_selector'), added overflow menu ('browser_overflow_menu' -> 'menu_branch_management'), and rendered BranchManagementDialog in both RepoBrowserScreen and MainAppScreen (via topbar branch pill).
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T13:49:40-07:00
+  Phase: Phase 3 - Repository Branch Management
+  Action: Create BranchManagementDialog component for comprehensive branch operations
+  Files: /app/src/main/java/com/example/ui/screens/repository/BranchManagementDialog.kt
+  Result: Created BranchManagementDialog supporting current branch card, branch listing, HEAD SHA snippet, protected status badge, default branch badge, refresh, Create Branch dialog with source branch selection and name validation, Rename Branch dialog, Delete Branch confirmation with default branch protection, Set as Default Branch confirmation, and Branch Details inspection modal.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T13:47:45-07:00
+  Phase: Phase 3 - Repository Branch Management
+  Action: Implement branch operations in GitHubRepository and MainViewModel
+  Files: /app/src/main/java/com/example/data/repository/GitHubRepository.kt, /app/src/main/java/com/example/ui/viewmodel/MainViewModel.kt
+  Result: Implemented createBranch, renameBranch, deleteBranch, setDefaultBranch, getBranchDetails, and validateBranchName in GitHubRepository. Wired them through MainViewModel including default branch safety checks and predictable branch selection upon creation.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T13:45:50-07:00
+  Phase: Phase 3 - Repository Branch Management
+  Action: Add branch management DTOs and GitHubApi endpoints
+  Files: /app/src/main/java/com/example/data/remote/dto/GitHubDtos.kt, /app/src/main/java/com/example/data/remote/GitHubApi.kt
+  Result: Added CreateRefRequest, RenameBranchRequest, and UpdateRepoRequest DTOs and added createRef, deleteRef, renameBranch, and updateRepo endpoints in GitHubApi.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T13:41:00-07:00
+  Phase: Phase 2 - Finish the GitHub Path Picker
+  Action: Add focused UI tests for SELECTED_ITEM mode and directory selection in GitHubPathPickerDialogTest
+  Files: /app/src/test/java/com/example/ui/components/GitHubPathPickerDialogTest.kt
+  Result: Authored UI tests in GitHubPathPickerDialogTest validating SELECTED_ITEM mode for both file and directory selection, subfolder navigation, folder selection via dedicated button, and verified that confirmed paths are exact repository-relative paths.
+  Verification: Targeted and full test suites passed cleanly (BUILD SUCCESSFUL).
+
+- Date/Time: 2026-09-29T13:39:10-07:00
+  Phase: Phase 2 - Finish the GitHub Path Picker
+  Action: Add SELECTED_ITEM mode to GitHubPathPickerDialog and wire into DownloadScreen
+  Files: /app/src/main/java/com/example/ui/components/GitHubPathPickerDialog.kt, /app/src/main/java/com/example/ui/screens/download/DownloadScreen.kt
+  Result: Added GitHubPickerMode.SELECTED_ITEM to support selecting both files and folders in the selected-item download flow. Wired Add Item button in DownloadScreen for selected scope to launch the picker and add chosen paths.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T06:43:20-07:00
+  Phase: Phase 2 - Finish the GitHub Path Picker
+  Action: Add Git Trees fallback in GitHubRepository to handle large directories without truncation
+  Files: /app/src/main/java/com/example/data/repository/GitHubRepository.kt
+  Result: Implemented getDirectoryContentsViaTree fallback in GitHubRepository. When GitHub Contents API reaches the 1000 item limit or returns 403/409/422 size errors, it automatically falls back to Git Trees API navigation down the folder hierarchy, ensuring complete directories are retrieved without silent truncation.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-29T06:28:40-07:00
+  Phase: Phase 1 - Transfer Correctness and Security
+  Action: Strengthen unit and integration test coverage across AuthInterceptor, Migration, DownloadCorrectness, and WorkManager
+  Files: /app/src/test/java/com/example/data/remote/AuthInterceptorTest.kt, /app/src/test/java/com/example/data/local/TransferPersistenceMigrationTest.kt, /app/src/test/java/com/example/domain/engine/DownloadCorrectnessAndRecoveryTest.kt, /app/src/test/java/com/example/domain/worker/WorkManagerAndSafStressTest.kt
+  Result: Authored AuthInterceptorTest verifying token exclusion on raw.githubusercontent.com and external hosts; added migration 3 to 4 test in TransferPersistenceMigrationTest; strengthened production assertions in DownloadCorrectnessAndRecoveryTest and WorkManagerAndSafStressTest.
+  Verification: Targeted tests and full suite gradle :app:testDebugUnitTest passed cleanly (BUILD SUCCESSFUL).
+
+- Date/Time: 2026-09-28T03:22:10-07:00
+  Phase: Phase 1 - Transfer Correctness and Security
+  Action: Enforce credential security in AuthInterceptor
+  Files: /app/src/main/java/com/example/data/remote/AuthInterceptor.kt, /app/src/main/java/com/example/data/remote/ApiClient.kt
+  Result: Restricted GitHub authorization headers and GitHub REST API headers strictly to authorized GitHub API endpoints (api.github.com or configured customBaseUrl). Explicitly barred raw.githubusercontent.com and unintended hosts from receiving Bearer tokens.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-28T03:20:40-07:00
+  Phase: Phase 1 - Transfer Correctness and Security
+  Action: Strengthen TransferEngine persistence, recovery, WorkManager enqueue guards, and upload commit guards
+  Files: /app/src/main/java/com/example/domain/engine/TransferEngine.kt
+  Result: Persisted full download configuration (remotePath, destinationUri, selectedPathsJson) in startDownload. Reconstructed exact request on execution/retry in executeDownloadJob. Enforced WorkManager unique enqueue await (op.result.get()) before onCreated callback. Updated retryTransfer to use ExistingWorkPolicy.REPLACE. Hardened upload commit boundary so that any non-successful item immediately aborts the commit.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-28T03:18:20-07:00
+  Phase: Phase 1 - Transfer Correctness and Security
+  Action: Add selectedPathsJson to TransferEntity and implement Room Migration 3 to 4
+  Files: /app/src/main/java/com/example/data/local/entity/TransferEntity.kt, /app/src/main/java/com/example/data/local/AppDatabase.kt
+  Result: Added selectedPathsJson column to TransferEntity and implemented MIGRATION_3_4 in AppDatabase (version 4) to persist exact multi-item selected paths for crash recovery and retries.
+  Verification: compile_applet succeeded cleanly.
+
+- Date/Time: 2026-09-28T03:11:30-07:00
+  Phase: Phase 0 - Establish Permanent Project-Work Protocol
+  Action: Create MASTER_PROMPT.md and NEXT_PROMPT.md in .ai/ACTIVE_TASK/
+  Files: /.ai/ACTIVE_TASK/MASTER_PROMPT.md, /.ai/ACTIVE_TASK/NEXT_PROMPT.md
+  Result: Created .ai/ACTIVE_TASK/ folder with comprehensive MASTER_PROMPT.md specifying all project roadmap requirements (Core transfer reliability, Upload, Download, GitHub browsing, Repository and branch management, Wipe modes, History clear, Cache architecture, Authentication, UI, Quality, and Execution protocol) and NEXT_PROMPT.md defining Phase 1 objectives.
+  Verification: compile_applet succeeded cleanly.
 
 - Date/Time: 2026-09-28T00:33:20-07:00
   Phase: Phase 15 - AuthDialog Back Handling, Test Semantics, and Comprehensive UI Testing
